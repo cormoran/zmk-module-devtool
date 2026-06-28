@@ -82,8 +82,9 @@ static void set_error(cormoran_devtool_Response *resp, const char *message) {
     resp->response_type.error = err;
 }
 
-static int handle_set_studio_lock_state_request(
-    const cormoran_devtool_SetStudioLockStateRequest *req, cormoran_devtool_Response *resp) {
+static int
+handle_set_studio_lock_state_request(const cormoran_devtool_SetStudioLockStateRequest *req,
+                                     cormoran_devtool_Response *resp) {
     switch (req->state) {
     case cormoran_devtool_StudioLockState_STUDIO_LOCK_STATE_LOCKED:
         zmk_studio_core_lock();
