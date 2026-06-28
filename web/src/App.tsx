@@ -6,26 +6,32 @@ import {
   ZMKCustomSubsystem,
   ZMKAppContext,
 } from "@cormoran/zmk-studio-react-hook";
-import { Request, Response } from "./proto/your-name/template/template";
+import {
+  Request,
+  Response,
+  StudioLockState,
+} from "./proto/cormoran/devtool/devtool";
 
-export const SUBSYSTEM_IDENTIFIER = "your_name__template";
+export const SUBSYSTEM_IDENTIFIER = "cormoran__devtool";
+
+type Operation = "unlock" | "lock" | "getLockState" | "bootloader" | "reboot";
 
 function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🔧 ZMK Module Template</h1>
-        <p>Custom Studio RPC Demo</p>
+        <h1>ZMK Devtool</h1>
+        <p>Custom Studio RPC controls for development firmware.</p>
       </header>
 
       <ZMKConnection
         renderDisconnected={({ connect, isLoading, error }) => (
           <section className="card">
             <h2>Device Connection</h2>
-            {isLoading && <p>⏳ Connecting...</p>}
+            {isLoading && <p>Connecting...</p>}
             {error && (
               <div className="error-message">
-                <p>🚨 {error}</p>
+                <p>{error}</p>
               </div>
             )}
             {!isLoading && (
@@ -33,7 +39,7 @@ function App() {
                 className="btn btn-primary"
                 onClick={() => connect(serial_connect)}
               >
-                🔌 Connect Serial
+                Connect Serial
               </button>
             )}
           </section>
@@ -43,7 +49,7 @@ function App() {
             <section className="card">
               <h2>Device Connection</h2>
               <div className="device-info">
-                <h3>✅ Connected to: {deviceName}</h3>
+                <h3>Connected to: {deviceName}</h3>
               </div>
               <button className="btn btn-secondary" onClick={disconnect}>
                 Disconnect
@@ -57,28 +63,40 @@ function App() {
 
       <footer className="app-footer">
         <p>
-          <strong>Template Module</strong> - Customize this for your ZMK module
+          <strong>ZMK Devtool</strong> custom subsystem: {SUBSYSTEM_IDENTIFIER}
         </p>
       </footer>
     </div>
   );
 }
 
+function lockStateLabel(state: StudioLockState | undefined): string {
+  switch (state) {
+    case StudioLockState.STUDIO_LOCK_STATE_LOCKED:
+      return "locked";
+    case StudioLockState.STUDIO_LOCK_STATE_UNLOCKED:
+      return "unlocked";
+    default:
+      return "unknown";
+  }
+}
+
 export function RPCTestSection() {
   const zmkApp = useContext(ZMKAppContext);
-  const [inputValue, setInputValue] = useState<number>(42);
-  const [response, setResponse] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [activeOperation, setActiveOperation] = useState<Operation | null>(
+    null
+  );
 
   if (!zmkApp) return null;
 
   const subsystem = zmkApp.findSubsystem(SUBSYSTEM_IDENTIFIER);
 
-  const sendSampleRequest = async () => {
+  const callDevtool = async (operation: Operation, request: Request) => {
     if (!zmkApp.state.connection || !subsystem) return;
 
-    setIsLoading(true);
-    setResponse(null);
+    setActiveOperation(operation);
+    setStatus(null);
 
     try {
       const service = new ZMKCustomSubsystem(
@@ -86,42 +104,52 @@ export function RPCTestSection() {
         subsystem.index
       );
 
-      const request = Request.create({
-        sample: {
-          value: inputValue,
-        },
-      });
-
       const payload = Request.encode(request).finish();
       const responsePayload = await service.callRPC(payload);
 
-      if (responsePayload) {
-        const resp = Response.decode(responsePayload);
-        console.log("Decoded response:", resp);
+      if (!responsePayload) {
+        setStatus("No response payload");
+        return;
+      }
 
-        if (resp.sample) {
-          setResponse(resp.sample.value);
-        } else if (resp.error) {
-          setResponse(`Error: ${resp.error.message}`);
-        }
+      const resp = Response.decode(responsePayload);
+
+      if (resp.error) {
+        setStatus(`Error: ${resp.error.message}`);
+      } else if (resp.setStudioLockState) {
+        setStatus(`Studio is ${lockStateLabel(resp.setStudioLockState.state)}`);
+      } else if (resp.getStudioLockState) {
+        setStatus(`Studio is ${lockStateLabel(resp.getStudioLockState.state)}`);
+      } else if (resp.enterBootloader) {
+        setStatus("Bootloader request accepted");
+      } else if (resp.reboot) {
+        setStatus("Reboot request accepted");
+      } else {
+        setStatus("Request completed");
       }
     } catch (error) {
-      console.error("RPC call failed:", error);
-      setResponse(
+      setStatus(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
     } finally {
-      setIsLoading(false);
+      setActiveOperation(null);
     }
   };
+
+  const setStudioLockState = (state: StudioLockState) =>
+    Request.create({
+      setStudioLockState: {
+        state,
+      },
+    });
 
   if (!subsystem) {
     return (
       <section className="card">
         <div className="warning-message">
           <p>
-            ⚠️ Subsystem "{SUBSYSTEM_IDENTIFIER}" not found. Make sure your
-            firmware includes the template module.
+            Subsystem "{SUBSYSTEM_IDENTIFIER}" not found. Make sure your
+            firmware includes the ZMK Devtool module.
           </p>
         </div>
       </section>
@@ -130,31 +158,73 @@ export function RPCTestSection() {
 
   return (
     <section className="card">
-      <h2>RPC Test</h2>
-      <p>Send a sample request to the firmware:</p>
+      <h2>Devtool RPC</h2>
 
-      <div className="input-group">
-        <label htmlFor="value-input">Value:</label>
-        <input
-          id="value-input"
-          type="number"
-          value={inputValue}
-          onChange={(e) => setInputValue(parseInt(e.target.value) || 0)}
-        />
+      <div className="button-grid">
+        <button
+          className="btn btn-primary"
+          disabled={activeOperation !== null}
+          onClick={() =>
+            callDevtool(
+              "unlock",
+              setStudioLockState(StudioLockState.STUDIO_LOCK_STATE_UNLOCKED)
+            )
+          }
+        >
+          {activeOperation === "unlock" ? "Unlocking..." : "Unlock Studio"}
+        </button>
+
+        <button
+          className="btn btn-secondary"
+          disabled={activeOperation !== null}
+          onClick={() =>
+            callDevtool(
+              "lock",
+              setStudioLockState(StudioLockState.STUDIO_LOCK_STATE_LOCKED)
+            )
+          }
+        >
+          {activeOperation === "lock" ? "Locking..." : "Lock Studio"}
+        </button>
+
+        <button
+          className="btn btn-secondary"
+          disabled={activeOperation !== null}
+          onClick={() =>
+            callDevtool(
+              "getLockState",
+              Request.create({ getStudioLockState: {} })
+            )
+          }
+        >
+          {activeOperation === "getLockState" ? "Reading..." : "Get Lock State"}
+        </button>
+
+        <button
+          className="btn btn-danger"
+          disabled={activeOperation !== null}
+          onClick={() =>
+            callDevtool("bootloader", Request.create({ enterBootloader: {} }))
+          }
+        >
+          {activeOperation === "bootloader"
+            ? "Requesting..."
+            : "Enter Bootloader"}
+        </button>
+
+        <button
+          className="btn btn-danger"
+          disabled={activeOperation !== null}
+          onClick={() => callDevtool("reboot", Request.create({ reboot: {} }))}
+        >
+          {activeOperation === "reboot" ? "Rebooting..." : "Reboot"}
+        </button>
       </div>
 
-      <button
-        className="btn btn-primary"
-        disabled={isLoading}
-        onClick={sendSampleRequest}
-      >
-        {isLoading ? "⏳ Sending..." : "📤 Send Request"}
-      </button>
-
-      {response && (
+      {status && (
         <div className="response-box">
-          <h3>Response from Firmware:</h3>
-          <pre>{response}</pre>
+          <h3>Result</h3>
+          <pre>{status}</pre>
         </div>
       )}
     </section>

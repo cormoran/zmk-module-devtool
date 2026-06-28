@@ -1,10 +1,10 @@
-config ZMK_TEMPLATE_FEATURE
-    bool "Enable template feature"
+config ZMK_DEVTOOL
+    bool "Enable ZMK Devtool module"
 
-if ZMK_TEMPLATE_FEATURE
+if ZMK_DEVTOOL
 
-config ZMK_TEMPLATE_FEATURE_STUDIO_RPC
-    bool "Enable template feature custom Studio RPC"
+config ZMK_DEVTOOL_STUDIO_RPC
+    bool "Enable ZMK Devtool custom Studio RPC"
     depends on ZMK_STUDIO
 
 endif
