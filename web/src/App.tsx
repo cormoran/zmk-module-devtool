@@ -14,7 +14,7 @@ import {
 
 export const SUBSYSTEM_IDENTIFIER = "cormoran__devtool";
 
-type Operation = "unlock" | "lock" | "bootloader" | "reboot";
+type Operation = "unlock" | "lock" | "getLockState" | "bootloader" | "reboot";
 
 function App() {
   return (
@@ -118,6 +118,8 @@ export function RPCTestSection() {
         setStatus(`Error: ${resp.error.message}`);
       } else if (resp.setStudioLockState) {
         setStatus(`Studio is ${lockStateLabel(resp.setStudioLockState.state)}`);
+      } else if (resp.getStudioLockState) {
+        setStatus(`Studio is ${lockStateLabel(resp.getStudioLockState.state)}`);
       } else if (resp.enterBootloader) {
         setStatus("Bootloader request accepted");
       } else if (resp.reboot) {
@@ -183,6 +185,19 @@ export function RPCTestSection() {
           }
         >
           {activeOperation === "lock" ? "Locking..." : "Lock Studio"}
+        </button>
+
+        <button
+          className="btn btn-secondary"
+          disabled={activeOperation !== null}
+          onClick={() =>
+            callDevtool(
+              "getLockState",
+              Request.create({ getStudioLockState: {} })
+            )
+          }
+        >
+          {activeOperation === "getLockState" ? "Reading..." : "Get Lock State"}
         </button>
 
         <button

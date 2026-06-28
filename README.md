@@ -10,6 +10,7 @@ The module uses the **unofficial** custom ZMK Studio RPC protocol and requires a
 ## Features
 
 - Set ZMK Studio lock state to locked or unlocked.
+- Get the current ZMK Studio lock state.
 - Enter bootloader mode.
 - Reboot the keyboard firmware.
 - Optional React web UI for invoking the RPC methods from a browser.
@@ -61,6 +62,8 @@ The custom subsystem identifier is `cormoran__devtool`. Its security level is un
 - `set_studio_lock_state`
   - `STUDIO_LOCK_STATE_UNLOCKED` unlocks ZMK Studio without pressing a key.
   - `STUDIO_LOCK_STATE_LOCKED` locks ZMK Studio again.
+- `get_studio_lock_state`
+  - Returns the current Studio lock state.
 - `enter_bootloader`
   - Acknowledges the request, then reboots into bootloader mode after a short delay.
 - `reboot`

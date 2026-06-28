@@ -106,6 +106,16 @@ handle_set_studio_lock_state_request(const cormoran_devtool_SetStudioLockStateRe
     return 0;
 }
 
+static int handle_get_studio_lock_state_request(cormoran_devtool_Response *resp) {
+    cormoran_devtool_GetStudioLockStateResponse result =
+        cormoran_devtool_GetStudioLockStateResponse_init_zero;
+    result.state = to_proto_lock_state();
+
+    resp->which_response_type = cormoran_devtool_Response_get_studio_lock_state_tag;
+    resp->response_type.get_studio_lock_state = result;
+    return 0;
+}
+
 static int handle_enter_bootloader_request(cormoran_devtool_Response *resp) {
     cormoran_devtool_EnterBootloaderResponse result =
         cormoran_devtool_EnterBootloaderResponse_init_zero;
@@ -152,6 +162,9 @@ static bool devtool_rpc_handle_request(const zmk_custom_CallRequest *raw_request
         break;
     case cormoran_devtool_Request_reboot_tag:
         rc = handle_reboot_request(resp);
+        break;
+    case cormoran_devtool_Request_get_studio_lock_state_tag:
+        rc = handle_get_studio_lock_state_request(resp);
         break;
     default:
         LOG_WRN("Unsupported devtool request type: %d", req.which_request_type);

@@ -12,6 +12,10 @@ message SetStudioLockStateRequest { StudioLockState state = 1; }
 
 message SetStudioLockStateResponse { StudioLockState state = 1; }
 
+message GetStudioLockStateRequest {}
+
+message GetStudioLockStateResponse { StudioLockState state = 1; }
+
 message EnterBootloaderRequest {}
 
 message EnterBootloaderResponse {}
@@ -25,6 +29,7 @@ message Request {
         SetStudioLockStateRequest set_studio_lock_state = 1;
         EnterBootloaderRequest enter_bootloader = 2;
         RebootRequest reboot = 3;
+        GetStudioLockStateRequest get_studio_lock_state = 4;
     }
 }
 
@@ -36,5 +41,6 @@ message Response {
         SetStudioLockStateResponse set_studio_lock_state = 2;
         EnterBootloaderResponse enter_bootloader = 3;
         RebootResponse reboot = 4;
+        GetStudioLockStateResponse get_studio_lock_state = 5;
     }
 }

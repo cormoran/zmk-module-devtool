@@ -35,5 +35,6 @@ The UI exposes buttons for:
 
 - Unlock Studio
 - Lock Studio
+- Get Lock State
 - Enter Bootloader
 - Reboot

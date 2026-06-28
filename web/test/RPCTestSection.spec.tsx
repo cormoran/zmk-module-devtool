@@ -27,6 +27,9 @@ describe("RPCTestSection Component", () => {
         screen.getByRole("button", { name: "Lock Studio" })
       ).toBeInTheDocument();
       expect(
+        screen.getByRole("button", { name: "Get Lock State" })
+      ).toBeInTheDocument();
+      expect(
         screen.getByRole("button", { name: "Enter Bootloader" })
       ).toBeInTheDocument();
       expect(
