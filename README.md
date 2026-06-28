@@ -17,6 +17,8 @@ The module uses the **unofficial** custom ZMK Studio RPC protocol and requires a
 
 The custom subsystem identifier is `cormoran__devtool`. Its security level is unsecured so automation can unlock Studio before sending secured Studio RPC requests.
 
+![Web UI](./img/ui.png)
+
 ## Module User Guide
 
 1. Add this module and a patched ZMK with custom Studio RPC support to your `config/west.yml`.
