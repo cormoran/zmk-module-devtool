@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package cormoran.devtool;
+
+enum StudioLockState {
+    STUDIO_LOCK_STATE_UNSPECIFIED = 0;
+    STUDIO_LOCK_STATE_LOCKED = 1;
+    STUDIO_LOCK_STATE_UNLOCKED = 2;
+}
+
+message SetStudioLockStateRequest { StudioLockState state = 1; }
+
+message SetStudioLockStateResponse { StudioLockState state = 1; }
+
+message EnterBootloaderRequest {}
+
+message EnterBootloaderResponse {}
+
+message RebootRequest {}
+
+message RebootResponse {}
+
+message Request {
+    oneof request_type {
+        SetStudioLockStateRequest set_studio_lock_state = 1;
+        EnterBootloaderRequest enter_bootloader = 2;
+        RebootRequest reboot = 3;
+    }
+}
+
+message ErrorResponse { string message = 1; }
+
+message Response {
+    oneof response_type {
+        ErrorResponse error = 1;
+        SetStudioLockStateResponse set_studio_lock_state = 2;
+        EnterBootloaderResponse enter_bootloader = 3;
+        RebootResponse reboot = 4;
+    }
+}

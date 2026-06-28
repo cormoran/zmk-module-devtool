@@ -1,0 +1,3 @@
+# Nanopb options file for devtool.proto
+
+cormoran.devtool.ErrorResponse.message   max_size:96

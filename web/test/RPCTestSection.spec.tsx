@@ -19,13 +19,22 @@ describe("RPCTestSection Component", () => {
         </ZMKAppProvider>
       );
 
-      expect(screen.getByText(/RPC Test/i)).toBeInTheDocument();
-      expect(screen.getByText(/Send a sample request/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Value:/i)).toBeInTheDocument();
-      expect(screen.getByText(/Send Request/i)).toBeInTheDocument();
+      expect(screen.getByText(/Devtool RPC/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Unlock Studio" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Lock Studio" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Enter Bootloader" })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Reboot" })
+      ).toBeInTheDocument();
     });
 
-    it("should show default input value", () => {
+    it("should not show a result before an RPC is sent", () => {
       const mockZMKApp = createConnectedMockZMKApp({
         subsystems: [SUBSYSTEM_IDENTIFIER],
       });
@@ -36,8 +45,7 @@ describe("RPCTestSection Component", () => {
         </ZMKAppProvider>
       );
 
-      const input = screen.getByLabelText(/Value:/i) as HTMLInputElement;
-      expect(input.value).toBe("42");
+      expect(screen.queryByText(/Result/i)).not.toBeInTheDocument();
     });
   });
 
@@ -55,11 +63,11 @@ describe("RPCTestSection Component", () => {
       );
 
       expect(
-        screen.getByText(/Subsystem "your_name__template" not found/i)
+        screen.getByText(/Subsystem "cormoran__devtool" not found/i)
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          /Make sure your firmware includes the template module/i
+          /Make sure your firmware includes the ZMK Devtool module/i
         )
       ).toBeInTheDocument();
     });
