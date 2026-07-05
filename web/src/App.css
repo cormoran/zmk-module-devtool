@@ -108,3 +108,13 @@
   overflow-x: auto;
   white-space: pre-wrap;
 }
+
+.log-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.log-list pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
