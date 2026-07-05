@@ -10,6 +10,8 @@
 #include <zmk/studio/custom.h>
 #include <cormoran/devtool/devtool.pb.h>
 
+#include "devtool_internal.h"
+
 #if IS_ENABLED(CONFIG_RETENTION_BOOT_MODE)
 #include <zephyr/retention/bootmode.h>
 #endif
@@ -74,7 +76,7 @@ static void schedule_reboot(enum devtool_reboot_target target) {
     k_work_schedule(&devtool_reboot_work, K_MSEC(REBOOT_DELAY_MS));
 }
 
-static void set_error(cormoran_devtool_Response *resp, const char *message) {
+void devtool_set_error(cormoran_devtool_Response *resp, const char *message) {
     cormoran_devtool_ErrorResponse err = cormoran_devtool_ErrorResponse_init_zero;
 
     snprintf(err.message, sizeof(err.message), "%s", message);
@@ -93,7 +95,7 @@ handle_set_studio_lock_state_request(const cormoran_devtool_SetStudioLockStateRe
         zmk_studio_core_unlock();
         break;
     default:
-        set_error(resp, "Invalid Studio lock state");
+        devtool_set_error(resp, "Invalid Studio lock state");
         return -EINVAL;
     }
 
@@ -148,7 +150,7 @@ static bool devtool_rpc_handle_request(const zmk_custom_CallRequest *raw_request
         pb_istream_from_buffer(raw_request->payload.bytes, raw_request->payload.size);
     if (!pb_decode(&req_stream, cormoran_devtool_Request_fields, &req)) {
         LOG_WRN("Failed to decode devtool request: %s", PB_GET_ERROR(&req_stream));
-        set_error(resp, "Failed to decode request");
+        devtool_set_error(resp, "Failed to decode request");
         return true;
     }
 
@@ -166,13 +168,54 @@ static bool devtool_rpc_handle_request(const zmk_custom_CallRequest *raw_request
     case cormoran_devtool_Request_get_studio_lock_state_tag:
         rc = handle_get_studio_lock_state_request(resp);
         break;
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LAYER_STATE)
+    case cormoran_devtool_Request_get_layer_state_tag:
+        rc = devtool_handle_get_layer_state(resp);
+        break;
+    case cormoran_devtool_Request_set_layer_state_tag:
+        rc = devtool_handle_set_layer_state(&req.request_type.set_layer_state, resp);
+        break;
+    case cormoran_devtool_Request_toggle_layer_tag:
+        rc = devtool_handle_toggle_layer(&req.request_type.toggle_layer, resp);
+        break;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_KEY_INJECTION)
+    case cormoran_devtool_Request_inject_key_tag:
+        rc = devtool_handle_inject_key(&req.request_type.inject_key, resp);
+        break;
+    case cormoran_devtool_Request_tap_key_tag:
+        rc = devtool_handle_tap_key(&req.request_type.tap_key, resp);
+        break;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_EVENT_TAP)
+    case cormoran_devtool_Request_subscribe_events_tag:
+        rc = devtool_handle_subscribe_events(&req.request_type.subscribe_events, resp);
+        break;
+    case cormoran_devtool_Request_get_events_tag:
+        rc = devtool_handle_get_events(&req.request_type.get_events, resp);
+        break;
+    case cormoran_devtool_Request_clear_events_tag:
+        rc = devtool_handle_clear_events(resp);
+        break;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE)
+    case cormoran_devtool_Request_get_logs_tag:
+        rc = devtool_handle_get_logs(&req.request_type.get_logs, resp);
+        break;
+    case cormoran_devtool_Request_clear_logs_tag:
+        rc = devtool_handle_clear_logs(resp);
+        break;
+    case cormoran_devtool_Request_set_log_capture_filter_tag:
+        rc = devtool_handle_set_log_capture_filter(&req.request_type.set_log_capture_filter, resp);
+        break;
+#endif
     default:
         LOG_WRN("Unsupported devtool request type: %d", req.which_request_type);
         rc = -ENOTSUP;
     }
 
     if (rc != 0 && resp->which_response_type != cormoran_devtool_Response_error_tag) {
-        set_error(resp, "Failed to process request");
+        devtool_set_error(resp, "Failed to process request");
     }
 
     return true;

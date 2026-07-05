@@ -6,7 +6,7 @@ include:
   - artifact: module_devtool_board_with_rpc
     board: xiao_ble//zmk
     shield: tester_xiao
-    cmake-args: -DCONFIG_ZMK_STUDIO=y -DCONFIG_ZMK_DEVTOOL=y -DCONFIG_ZMK_DEVTOOL_STUDIO_RPC=y
+    cmake-args: -DCONFIG_ZMK_STUDIO=y -DCONFIG_ZMK_DEVTOOL=y -DCONFIG_ZMK_DEVTOOL_STUDIO_RPC=y -DCONFIG_ZMK_DEVTOOL_LAYER_STATE=y -DCONFIG_ZMK_DEVTOOL_KEY_INJECTION=y -DCONFIG_ZMK_DEVTOOL_EVENT_TAP=y -DCONFIG_ZMK_DEVTOOL_LOG_CAPTURE=y -DCONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE=384
     snippet: studio-rpc-usb-uart
 
   - artifact: module_devtool_board_without_rpc
