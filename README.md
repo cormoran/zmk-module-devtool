@@ -13,9 +13,15 @@ The module uses the **unofficial** custom ZMK Studio RPC protocol and requires a
 - Get the current ZMK Studio lock state.
 - Enter bootloader mode.
 - Reboot the keyboard firmware.
+- Get/set/toggle runtime layer activation.
+- Inject virtual key presses (and releases) without touching hardware.
+- Tap a running log of position/keycode/layer/modifier events for verifying what an injected (or real) key press did.
+- Pull captured Zephyr log records without a debug probe.
 - Optional React web UI for invoking the RPC methods from a browser.
 
 The custom subsystem identifier is `cormoran__devtool`. Its security level is unsecured so automation can unlock Studio before sending secured Studio RPC requests.
+
+Key injection, the event tap and log capture are each behind their own Kconfig option (see below) and are meant for development/test firmware only -- the event tap in particular can observe every keystroke.
 
 ![Web UI](./img/ui.png)
 
@@ -53,6 +59,15 @@ The custom subsystem identifier is `cormoran__devtool`. Its security level is un
    CONFIG_ZMK_LOW_PRIORITY_THREAD_STACK_SIZE=2048
    ```
 
+   Layer state (`CONFIG_ZMK_DEVTOOL_LAYER_STATE`) is on by default once Studio RPC is enabled. Key injection, the event tap and log capture are opt-in and need a bigger TX buffer for their multi-record responses:
+
+   ```conf
+   CONFIG_ZMK_DEVTOOL_KEY_INJECTION=y
+   CONFIG_ZMK_DEVTOOL_EVENT_TAP=y
+   CONFIG_ZMK_DEVTOOL_LOG_CAPTURE=y
+   CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE=384
+   ```
+
 3. Build and flash your firmware as usual.
 
 4. Use the custom RPC subsystem `cormoran__devtool`.
@@ -60,6 +75,8 @@ The custom subsystem identifier is `cormoran__devtool`. Its security level is un
    The protobuf schema is defined in `proto/cormoran/devtool/devtool.proto`.
 
 ### RPC Methods
+
+**Core** (`CONFIG_ZMK_DEVTOOL_STUDIO_RPC`)
 
 - `set_studio_lock_state`
   - `STUDIO_LOCK_STATE_UNLOCKED` unlocks ZMK Studio without pressing a key.
@@ -72,6 +89,37 @@ The custom subsystem identifier is `cormoran__devtool`. Its security level is un
   - Acknowledges the request, then performs a warm reboot after a short delay.
 
 Because this module can unlock Studio and reboot the device without physical input, enable it only in development or controlled test firmware.
+
+**Layer state** (`CONFIG_ZMK_DEVTOOL_LAYER_STATE`, on by default)
+
+- `get_layer_state` -- returns the active-layers bitmask and the highest active layer. The default layer is always reported active, matching ZMK's own fallback rule.
+- `set_layer_state` -- momentary activate/deactivate a layer (mirrors `&mo`/`&to`), optionally locking it like `&tog`.
+- `toggle_layer` -- activate if inactive, deactivate if active.
+
+**Key injection** (`CONFIG_ZMK_DEVTOOL_KEY_INJECTION`)
+
+- `inject_key` -- raises the same `zmk_position_state_changed` event a real matrix scan would, so combos, hold-taps and behaviors all see it.
+- `tap_key` -- presses then schedules a release after `hold_ms`. Only one tap can be pending at a time; a second call while one is in flight is rejected.
+
+**Event tap** (`CONFIG_ZMK_DEVTOOL_EVENT_TAP`)
+
+Poll-based observation of position/keycode/layer/modifier events, so you can verify what an injected (or real) key press actually did.
+
+- `subscribe_events` -- sets a bitmask of event types to capture (`0` disables the tap and drops buffered content).
+- `get_events` -- cursor-based drain; pass back `next_cursor` to continue without gaps, `dropped_count` reports records overwritten between polls.
+- `clear_events` -- empties the buffer.
+
+This can observe every keystroke -- development/test firmware only.
+
+**Log capture** (`CONFIG_ZMK_DEVTOOL_LOG_CAPTURE`)
+
+Adds a Zephyr log backend that mirrors captured records into a RAM ring buffer, retrievable without a debug probe.
+
+- `get_logs` -- cursor-based drain, same shape as `get_events`.
+- `clear_logs` -- empties the buffer.
+- `set_log_capture_filter` -- overrides the minimum captured level globally (empty `source`) or for one log source.
+
+The capture backend defaults to `INF` (`CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL`), which is below the Studio RPC dispatch/transport's own `DBG`-level logging -- calling `get_logs` does not feed its own chatter back into the buffer it just read from. Raise a specific source to `DBG` at runtime with `set_log_capture_filter` instead of lowering the default.
 
 ## Web UI
 
