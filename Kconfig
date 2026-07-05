@@ -7,4 +7,77 @@ config ZMK_DEVTOOL_STUDIO_RPC
     bool "Enable ZMK Devtool custom Studio RPC"
     depends on ZMK_STUDIO
 
+if ZMK_DEVTOOL_STUDIO_RPC
+
+config ZMK_DEVTOOL_LAYER_STATE
+    bool "Enable runtime layer state RPCs (get/set/toggle layer)"
+    default y
+
+config ZMK_DEVTOOL_KEY_INJECTION
+    bool "Enable virtual key injection RPCs (inject_key/tap_key)"
+    help
+      Lets Studio RPC callers simulate key presses without physical input,
+      by raising the same zmk_position_state_changed event a real matrix
+      scan would. Enable only in development/test firmware.
+
+config ZMK_DEVTOOL_EVENT_TAP
+    bool "Enable event tap RPCs (subscribe/get/clear events)"
+    help
+      Records position/keycode/layer/modifier state-changed events into a
+      RAM ring buffer for polling over Studio RPC, so calls can verify what
+      an injected key (or a real one) did. This can observe every keystroke
+      -- development/test firmware only.
+
+if ZMK_DEVTOOL_EVENT_TAP
+
+config ZMK_DEVTOOL_EVENT_TAP_BUFFER_SIZE
+    int "Event tap ring buffer capacity (records)"
+    default 32
+
+endif # ZMK_DEVTOOL_EVENT_TAP
+
+config ZMK_DEVTOOL_LOG_CAPTURE
+    bool "Enable log capture RPCs (get_logs/clear_logs/set_log_capture_filter)"
+    select LOG
+    select LOG_OUTPUT
+    select LOG_RUNTIME_FILTERING
+    help
+      Adds a Zephyr log backend that stores formatted log records in a RAM
+      ring buffer, retrievable over Studio RPC without a debug probe.
+      Selects LOG (production keyboard builds often leave it off) and
+      LOG_RUNTIME_FILTERING: without the latter every backend receives every
+      compiled-in log message unconditionally, which would defeat the
+      default-level self-feedback-loop mitigation below. Incompatible with
+      CONFIG_LOG_MODE_MINIMAL (no backend/runtime-filtering support there);
+      LOG_RUNTIME_FILTERING's own Kconfig dependency already excludes it.
+
+if ZMK_DEVTOOL_LOG_CAPTURE
+
+config ZMK_DEVTOOL_LOG_CAPTURE_BUFFER_SIZE
+    int "Log capture ring buffer capacity (records)"
+    default 16
+
+config ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL
+    int "Default minimum captured log level (1=err 2=wrn 3=inf 4=dbg)"
+    default 3
+    range 1 4
+    help
+      Default INF (3) deliberately excludes the DBG-level Studio RPC
+      dispatch/transport logging, so calling get_logs does not feed its own
+      chatter back into the buffer it just read from. Raise a specific
+      source to DBG at runtime with set_log_capture_filter instead of
+      lowering this default.
+
+endif # ZMK_DEVTOOL_LOG_CAPTURE
+
+config ZMK_DEVTOOL_STUDIO_RPC_TEST
+    bool "Enable devtool Studio RPC self-test (native_sim only)"
+    help
+      Adds test-only init logic exercising the layer state, key injection,
+      event tap and log capture RPC handlers directly (no transport). Needs
+      CONFIG_ZMK_STUDIO, which in turn needs a physical-layout devicetree
+      (see tests/studio/ vs tests/test/). Not for production builds.
+
+endif # ZMK_DEVTOOL_STUDIO_RPC
+
 endif
