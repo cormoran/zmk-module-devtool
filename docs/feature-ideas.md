@@ -18,18 +18,27 @@ bootloader), but the *exercise*, *observe*, and *debug* steps still require a
 human pressing keys, a host-side HID sniffer, or a J-Link/RTT rig. The ideas
 below focus on closing that loop.
 
-### Out of scope (covered by sibling modules)
+### Out of scope
+
+Covered by sibling modules:
 
 - [zmk-feature-device-info](https://github.com/cormoran/zmk-feature-device-info):
   read-only diagnostics — build/git info, hwinfo, reset cause, flash/SRAM
   size, compile-time ZMK config flags, Zephyr device list, uptime.
 - [zmk-feature-zephyr-setting-expose](https://github.com/cormoran/zmk-feature-zephyr-setting-expose):
   Zephyr settings (NVS) list/read/write/delete, storage stats, GC, clear-all.
+- Endpoint/BLE runtime actions, crash/fault capture, and timing metrics are
+  also already handled by other modules in the same family.
 
 Anything that is "read static/diagnostic info" belongs in device-info, and
 anything that is "manipulate persisted settings" belongs in setting-expose.
-Devtool should own *runtime interaction*: injecting inputs, observing live
-events, and dev-only hardware pokes.
+Devtool should own *runtime interaction*: injecting inputs and observing live
+events.
+
+Considered but rejected as overkill for this module:
+
+- Pointer input injection/observation (virtual input device).
+- I2C/SPI register access and bus scan.
 
 ## Design principles
 
@@ -45,9 +54,8 @@ events, and dev-only hardware pokes.
   static response buffers, and `ZMK_STUDIO_RPC_TX_BUF_SIZE` sizing for large
   or streamed responses.
 - The subsystem is intentionally unsecured for automation. Features that can
-  observe keystrokes or touch hardware buses must carry a prominent
-  "development firmware only" warning in Kconfig help and README, and may
-  deserve a shared `ZMK_DEVTOOL_ALLOW_DANGEROUS` gate.
+  observe keystrokes must carry a prominent "development firmware only"
+  warning in Kconfig help and README.
 
 ## Tier 1 — close the verify loop
 
@@ -60,18 +68,51 @@ them over the *same* Studio RPC transport removes a whole class of setup pain.
 
 **Sketch.**
 
-- A custom Zephyr log backend writing formatted lines into a RAM ring buffer
+- A custom Zephyr log backend writing log records into a RAM ring buffer
   (size via Kconfig, e.g. 2–8 KB).
-- `get_logs { cursor }` → `{ lines[], next_cursor, dropped_count }` — cursor
-  based so the agent can poll incrementally; report how many lines were
-  dropped on overflow.
-- `clear_logs {}`, and optionally `set_log_level { module, level }` using
-  Zephyr runtime log filtering to turn on debug logs for one driver without
-  reflashing.
+- `get_logs { cursor }` → `{ records[], next_cursor, dropped_count }` —
+  cursor based so the agent can poll incrementally; report how many records
+  were dropped on overflow. Records are structured
+  `(source_id, level, timestamp, text)`, not preformatted strings, so hosts
+  can filter mechanically.
+- `clear_logs {}`, `set_capture_filter { source, level }`, and optionally
+  `set_log_level { module, level }` using Zephyr runtime log filtering to
+  turn on debug logs for one driver without reflashing.
 
-**Notes.** Response chunking must respect the TX buffer size. Log capture
-should be disabled while Studio RPC's own logging would recurse (filter the
-RPC module out of the backend).
+**The self-feedback problem.** Serving `get_logs` itself makes the RPC
+transport and Studio subsystem emit logs, which land in the buffer, so every
+poll generates fresh content — an infinite feedback loop that also drowns the
+useful logs. The design must break this structurally, not cosmetically:
+
+1. **Per-backend runtime filtering with an allow-list.** Zephyr's
+   `CONFIG_LOG_RUNTIME_FILTERING` + `log_filter_set()` configure levels *per
+   backend per source*. The capture backend defaults every source to OFF and
+   enables only an allow-list (typically: the module under development).
+   Transport/RPC logs then never enter the buffer, so recursion is
+   structurally impossible, while RTT/console backends keep seeing
+   everything. Allow-list defaults come from Kconfig and are adjustable at
+   runtime via `set_capture_filter`.
+2. **Split ZMK's log sources in the fork.** The catch: ZMK registers almost
+   everything under the single `zmk` log module (`LOG_MODULE_DECLARE(zmk)`),
+   so source-level filtering cannot separate Studio-transport logs from
+   useful keymap/behavior logs. Since this module already depends on the
+   `cormoran/zmk` fork (`main+custom-studio-protocol`), add a small patch
+   there registering the Studio RPC/transport files under a dedicated module
+   (e.g. `zmk_studio`), which the capture backend deny-lists by default.
+   Then capturing the rest of `zmk` becomes safe.
+3. **No logging in the capture path.** Devtool's own backend, ring buffer,
+   and RPC handlers use no `LOG_*` calls at all (enforced by convention and
+   its own log level pinned OFF) — the one part guaranteed at compile time.
+4. **Safety net: snapshot + bounded drain.** `get_logs` snapshots the write
+   cursor on entry and returns only records up to it. Even if some
+   self-generated log slips through the filters, each poll's growth is
+   bounded and visible (via `dropped_count` and per-record `source_id`), and
+   the host can discard it — degraded noise, never an infinite loop.
+
+(A thread-based suppression — drop records emitted by the RPC thread while a
+busy flag is set — only works reliably in `LOG_MODE_IMMEDIATE`, where the
+backend runs in the emitting thread's context. ZMK builds normally use
+deferred mode, so this is not the primary mechanism.)
 
 ### 2. Virtual key input injection
 
@@ -114,7 +155,8 @@ firmware itself should report what it did.
 **Notes.** This is effectively a keylogger — Kconfig warning mandatory, and
 it is the flagship reason for the "development firmware only" framing.
 Sharing the ring-buffer + cursor plumbing between ideas 1 and 3 keeps code
-size down.
+size down. Unlike log capture, the event tap has no self-feedback problem:
+serving an RPC produces no ZMK input/layer/HID events.
 
 ### 4. Layer state inspection & control
 
@@ -131,7 +173,7 @@ ask "which layers are active right now?".
 **Notes.** Small, low-risk, and pairs naturally with ideas 2/3 for keymap
 testing. Layer *names* are already available via official keymap RPC.
 
-## Tier 2 — split keyboards and pointing devices
+## Tier 2 — split keyboards
 
 ### 5. Split peripheral relay
 
@@ -151,106 +193,6 @@ manual step in the flash loop.
 split transport channel work is the main cost; once it exists, later features
 (e.g. peripheral log forwarding) can reuse it. Highest wall-clock savings for
 split-keyboard developers of anything in this list.
-
-### 6. Pointer input injection & observation
-
-**Motivation.** For pointing-device work (e.g. the PMW3610 trackball driver)
-the interesting code path is Zephyr `input_report` → ZMK input processors →
-HID mouse report. A virtual input device that injects REL/ABS events lets an
-agent test input-processor chains (scaling, rotation, scroll layers) without
-spinning a physical trackball; the event tap (idea 3) then verifies the
-resulting mouse reports.
-
-**Sketch.**
-
-- A devtool virtual `input` device declared via devicetree overlay.
-- `inject_input { type, code, value, sync }` mirroring Zephyr's input event
-  triple.
-- Input events (from *any* device, real sensors included) appear in the
-  event tap stream, giving driver developers a live view of sensor output.
-
-### 7. Endpoint & BLE runtime actions
-
-**Motivation.** Testing multi-host setups needs "switch to BLE profile 2",
-"unpair profile 0", "prefer USB" as scriptable actions, plus live connection
-state to verify the result. setting-expose can poke the persisted bytes but
-has no semantics; device-info only reports compile-time flags.
-
-**Sketch.**
-
-- `select_ble_profile { index }`, `unpair_ble_profile { index }`,
-  `set_preferred_endpoint { usb | ble }`.
-- `get_connection_state {}` → active endpoint, per-profile
-  bonded/connected/address, USB state.
-
-**Notes.** Boundary case: the read-only half could arguably live in
-device-info; keeping action + matching state query together in devtool makes
-the CLI story simpler ("switch, then confirm").
-
-## Tier 3 — hardware bring-up and crash forensics
-
-### 8. I2C/SPI register access & bus scan
-
-**Motivation.** Sensor driver bring-up (PMW3610 again) is dominated by "what
-does register 0x02 actually read?" questions that today require RTT printf
-cycles. An I2C bus scan plus raw register read/write over RPC turns those
-into one-second CLI calls, including live register dumps while the sensor
-runs.
-
-**Sketch.**
-
-- `i2c_scan { bus }` → present addresses.
-- `reg_read { device, reg, count }` / `reg_write { device, reg, data }`
-  addressing devices by devicetree node label, routed through the existing
-  driver's bus handle where possible.
-
-**Notes.** Clearly dangerous (can misconfigure hardware) — gate behind
-`ZMK_DEVTOOL_ALLOW_DANGEROUS`. SPI support can piggyback on per-driver hooks
-where a generic implementation is awkward (sensors with custom protocols like
-PMW3610's 3-wire SPI).
-
-### 9. GPIO peek/poke
-
-**Motivation.** First-boot bring-up of a new PCB: verify matrix wiring, check
-a rotary encoder's pins, confirm an LED gate — without writing throwaway
-firmware. `gpio_read { port, pin }` / `gpio_write { port, pin, value }` /
-`gpio_configure { … }`.
-
-**Notes.** Same dangerous-gate as idea 8. Refuse pins already claimed by
-kscan unless explicitly forced, to avoid fighting live drivers.
-
-### 10. Crash forensics: last-fault info & coredump retrieval
-
-**Motivation.** device-info exposes the reset *cause*; when firmware hard
-faults, the agent still cannot see *where*. Zephyr can persist fault details
-(faulting PC/LR, thread name) or a full coredump to a flash partition; a
-retrieval RPC (chunked) lets the agent pull it after reboot and symbolize it
-against the ELF on the host — post-mortem debugging with no debug probe.
-
-**Sketch.**
-
-- `get_last_fault {}` → compact fault record (cause, PC, LR, thread,
-  timestamp), cleared with `clear_last_fault {}`.
-- Optional full coredump: enable Zephyr's coredump flash backend, expose
-  `read_coredump { offset, count }`.
-
-**Notes.** Compact fault record first — it is a few dozen bytes and covers
-most needs; full coredump is a follow-up. Needs a small retained-RAM or flash
-region; interacts with board partition layout, so keep it opt-in.
-
-### 11. Timing & health metrics
-
-**Motivation.** "Is my input processor making the scan loop slow?" and "is
-the work queue backing up?" are common performance questions with no current
-answer. A small metrics RPC (event-queue high-water mark, work-queue max
-latency, matrix scan rate, per-thread stack high-water mark) plus an `echo`
-RPC with device timestamp for transport-latency measurement gives agents
-numbers instead of guesses.
-
-**Notes.** Borderline with device-info's diagnostics; proposed here because
-the interesting values are dev-only instrumentation (needs hooks compiled
-into hot paths), not always-on info. Could migrate to device-info if it grows
-an "instrumentation" story instead.
 
 ## Cross-cutting work
 
@@ -272,10 +214,6 @@ an "instrumentation" story instead.
 | 2     | Key injection + event tap (2, 3) | Together they enable closed-loop E2E testing          |
 | 3     | Layer state (4)                  | Small; rounds out keymap testing                      |
 | 4     | Split relay (5)                  | Big quality-of-life for split boards                  |
-| 5     | Pointer injection (6)            | Unblocks input-processor/driver testing               |
-| 6     | Endpoint/BLE actions (7)         | Multi-host test automation                            |
-| 7     | Bus/GPIO access (8, 9)           | Bring-up power tools, dangerous-gated                 |
-| 8     | Fault capture (10), metrics (11) | Forensics and performance polish                      |
 
 Ideas 1–3 share infrastructure (RAM ring buffer + cursor-based chunked
 reads), so implementing log capture first also builds the plumbing that the
