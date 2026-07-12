@@ -68,6 +68,30 @@ config ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL
       source to DBG at runtime with set_log_capture_filter instead of
       lowering this default.
 
+config ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+    bool "Enable streaming log notifications (push instead of poll)"
+    default y
+    help
+      Adds the set_log_streaming RPC plus a dedicated low-priority thread
+      that pushes captured log records to the connected Studio client as
+      custom notifications the moment they are logged, so the client does
+      not have to poll get_logs. The notification + protobuf encoding runs
+      entirely on this thread, never on the logging subsystem's thread.
+
+if ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+
+config ZMK_DEVTOOL_LOG_CAPTURE_STREAM_STACK_SIZE
+    int "Log streaming thread stack size (bytes)"
+    default ZMK_STUDIO_RPC_THREAD_STACK_SIZE
+    help
+      Stack for the thread that encodes and sends streamed log
+      notifications. Raising a notification runs the full RPC response
+      encode + transport path synchronously on this thread (the same work
+      the Studio RPC thread does), so it defaults to the RPC thread's own
+      stack size.
+
+endif # ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+
 endif # ZMK_DEVTOOL_LOG_CAPTURE
 
 config ZMK_DEVTOOL_STUDIO_RPC_TEST

@@ -351,6 +351,133 @@ static int test_rpc_log_capture(void) {
     return 0;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+/*
+ * The streaming thread pushes captured records back to the client as custom
+ * notifications. Without a transport in native_sim the send itself no-ops, but
+ * the zmk_studio_custom_notification event is still raised synchronously by the
+ * streaming thread, so a direct subscriber can decode exactly the payload the
+ * client would have received.
+ */
+static volatile bool stream_saw_marker;
+
+static bool capture_stream_notification(const zmk_event_t *eh, cormoran_devtool_Notification *out) {
+    struct zmk_studio_custom_notification *ev = as_zmk_studio_custom_notification(eh);
+    if (!ev) {
+        return false;
+    }
+
+    /* Round-trip through CustomNotification, mirroring the real send path, to
+     * recover the subsystem payload bytes from the encode callback. */
+    static uint8_t buf[CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE + 16];
+    zmk_custom_CustomNotification cn = zmk_custom_CustomNotification_init_zero;
+    cn.subsystem_index = ev->subsystem_index;
+    cn.payload = ev->encode_payload;
+    pb_ostream_t os = pb_ostream_from_buffer(buf, sizeof(buf));
+    if (!pb_encode(&os, zmk_custom_CustomNotification_fields, &cn)) {
+        return false;
+    }
+
+    static struct call_response_payload_capture cap;
+    cap = (struct call_response_payload_capture){0};
+    zmk_custom_CustomNotification dec = zmk_custom_CustomNotification_init_zero;
+    dec.payload.funcs.decode = decode_call_response_payload;
+    dec.payload.arg = &cap;
+    pb_istream_t is = pb_istream_from_buffer(buf, os.bytes_written);
+    if (!pb_decode(&is, zmk_custom_CustomNotification_fields, &dec)) {
+        return false;
+    }
+
+    *out = (cormoran_devtool_Notification)cormoran_devtool_Notification_init_zero;
+    pb_istream_t ps = pb_istream_from_buffer(cap.buf, cap.size);
+    return pb_decode(&ps, cormoran_devtool_Notification_fields, out);
+}
+
+static int stream_test_listener_cb(const zmk_event_t *eh) {
+    cormoran_devtool_Notification n;
+    if (!capture_stream_notification(eh, &n) ||
+        n.which_notification_type != cormoran_devtool_Notification_log_stream_tag) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+    const cormoran_devtool_LogStreamNotification *ls = &n.notification_type.log_stream;
+    for (size_t i = 0; i < ls->records_count; i++) {
+        if (strstr(ls->records[i].message, "devtool_stream_marker") != NULL) {
+            stream_saw_marker = true;
+        }
+    }
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(devtool_stream_test, stream_test_listener_cb);
+ZMK_SUBSCRIPTION(devtool_stream_test, zmk_studio_custom_notification);
+
+static int set_log_streaming(bool enabled, cormoran_devtool_Response *resp) {
+    cormoran_devtool_Request req = cormoran_devtool_Request_init_zero;
+    req.which_request_type = cormoran_devtool_Request_set_log_streaming_tag;
+    req.request_type.set_log_streaming.enabled = enabled;
+    if (!call_devtool_rpc(&req, resp) ||
+        resp->which_response_type != cormoran_devtool_Response_set_log_streaming_tag ||
+        resp->response_type.set_log_streaming.enabled != enabled) {
+        LOG_ERR("set_log_streaming(%d) failed: type=%d", enabled, resp->which_response_type);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int test_rpc_log_streaming(void) {
+    cormoran_devtool_Response resp;
+    if (set_log_streaming(true, &resp) < 0) {
+        return -EINVAL;
+    }
+
+    stream_saw_marker = false;
+    LOG_INF("devtool_stream_marker");
+    /* Let the deferred logging thread process the marker and the low-priority
+     * streaming thread wake, drain and raise the notification. Do not drain the
+     * log with log_process() here: by the time this test runs the mock keyboard
+     * is generating log messages continuously, so a manual drain never returns. */
+    for (int i = 0; i < 20 && !stream_saw_marker; i++) {
+        k_sleep(K_MSEC(1));
+    }
+    if (!stream_saw_marker) {
+        LOG_ERR("streaming did not deliver the marker record");
+        return -EINVAL;
+    }
+
+    if (set_log_streaming(false, &resp) < 0) {
+        return -EINVAL;
+    }
+
+    /* After disabling, a new log must not raise a streaming notification.
+     * Keep this window short: the whole test runs concurrently with the mock
+     * keyboard whose scripted sequence ends (and exits the sim) after ~40ms. */
+    stream_saw_marker = false;
+    LOG_INF("devtool_stream_marker");
+    for (int i = 0; i < 5; i++) {
+        k_sleep(K_MSEC(1));
+    }
+    if (stream_saw_marker) {
+        LOG_ERR("streaming delivered a record after being disabled");
+        return -EINVAL;
+    }
+
+    LOG_INF("PASS: devtool_rpc_log_streaming");
+    return 0;
+}
+
+/*
+ * Unlike the other tests, this one cannot run from SYS_INIT: the streaming
+ * worker thread is a static thread, and z_init_static_threads() runs *after*
+ * the APPLICATION-level SYS_INIT functions (see kernel/init.c). Running from a
+ * static thread of our own means the worker is up and schedulable by the time
+ * we drive it.
+ */
+static void devtool_stream_test_thread(void) { test_rpc_log_streaming(); }
+
+K_THREAD_DEFINE(devtool_stream_test_tid, 4096, devtool_stream_test_thread, NULL, NULL, NULL,
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+#endif /* CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING */
+
 static int devtool_rpc_test_init(void) {
     int ret = test_rpc_layer_state();
     if (ret < 0) {

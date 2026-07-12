@@ -3,3 +3,4 @@ PASS: devtool_rpc_layer_state
 PASS: devtool_rpc_inject_key_and_event_tap
 PASS: devtool_rpc_tap_key_busy
 PASS: devtool_rpc_log_capture
+PASS: devtool_rpc_log_streaming

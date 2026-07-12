@@ -13,8 +13,14 @@
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/logging/log_msg.h>
 #include <zephyr/logging/log_output.h>
+#include <zephyr/sys/atomic.h>
 
 #include <cormoran/devtool/devtool.pb.h>
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+#include <pb_encode.h>
+#include <zmk/studio/custom.h>
+#endif
 
 #include "devtool_internal.h"
 
@@ -46,6 +52,16 @@ BUILD_ASSERT(DEVTOOL_LOGS_RESPONSE_ESTIMATED_MAX_SIZE + 64 <= CONFIG_ZMK_STUDIO_
 static cormoran_devtool_LogRecord log_ring[LOG_RING_CAPACITY];
 static uint32_t log_ring_total_written;
 static struct k_spinlock log_ring_lock;
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+/* Streaming state. streaming_enabled/suppress are only ever read/written with
+ * atomics; log_stream_cursor is guarded by log_ring_lock (shared with the ring
+ * math). See the streaming thread and devtool_handle_set_log_streaming below. */
+static atomic_t log_streaming_enabled = ATOMIC_INIT(0);
+static atomic_t log_stream_suppress = ATOMIC_INIT(0);
+static uint32_t log_stream_cursor;
+static K_SEM_DEFINE(log_stream_sem, 0, 1);
+#endif
 
 /* Built up by devtool_log_backend_process()/char_out() below. The logging
  * subsystem processes messages one at a time on a single thread (deferred
@@ -96,6 +112,18 @@ static void devtool_log_backend_process(const struct log_backend *const backend,
     ARG_UNUSED(backend);
     struct log_msg *log_msg = &msg->log;
 
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+    /* Drop anything logged as a side effect of the streaming thread's own
+     * notification send (e.g. the "zmk"-source "Encoding custom response" line),
+     * so streaming cannot re-trigger itself. Fully effective in immediate log
+     * mode where those logs run inline on the streaming thread; see the
+     * self-feedback note in the streaming thread and README for the deferred-mode
+     * caveat and the recommended zmk_studio source filter. */
+    if (atomic_get(&log_stream_suppress)) {
+        return;
+    }
+#endif
+
     pending_record = (cormoran_devtool_LogRecord)cormoran_devtool_LogRecord_init_zero;
     pending_message_len = 0;
 
@@ -120,6 +148,14 @@ static void devtool_log_backend_process(const struct log_backend *const backend,
         log_ring[log_ring_total_written % LOG_RING_CAPACITY] = pending_record;
         log_ring_total_written++;
     }
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+    /* Wake the streaming thread to encode+send on its own low-priority thread;
+     * the logging subsystem's thread must never do RPC/protobuf work itself. */
+    if (atomic_get(&log_streaming_enabled)) {
+        k_sem_give(&log_stream_sem);
+    }
+#endif
 }
 
 static void devtool_log_backend_init(const struct log_backend *const backend) {
@@ -194,5 +230,95 @@ int devtool_handle_set_log_capture_filter(const cormoran_devtool_SetLogCaptureFi
     resp->response_type.set_log_capture_filter = result;
     return 0;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+
+/* Encodes the devtool Notification as the CustomNotification payload bytes,
+ * same wire shape as a CallResponse payload. Runs synchronously inside
+ * raise_zmk_studio_custom_notification(), so `arg` may point at the streaming
+ * thread's stack. */
+static bool encode_stream_notification_payload(pb_ostream_t *stream, const pb_field_t *field,
+                                               void *const *arg) {
+    const cormoran_devtool_Notification *notification = *arg;
+    return zmk_rpc_custom_subsystem_encode_response_payload(
+        stream, field, cormoran_devtool_Notification_fields, notification);
+}
+
+/* Drains the log ring from log_stream_cursor and pushes it to the connected
+ * client as one or more LogStreamNotifications. All of the encode + transport
+ * work happens here, on this dedicated low-priority thread, so the logging
+ * subsystem's own thread only ever does the cheap ring-buffer append above. */
+static void log_stream_thread(void) {
+    for (;;) {
+        k_sem_take(&log_stream_sem, K_FOREVER);
+
+        while (atomic_get(&log_streaming_enabled)) {
+            cormoran_devtool_LogStreamNotification batch =
+                cormoran_devtool_LogStreamNotification_init_zero;
+            uint32_t start, count, dropped, total_written;
+
+            K_SPINLOCK(&log_ring_lock) {
+                total_written = log_ring_total_written;
+                devtool_ring_window(log_stream_cursor, total_written, LOG_RING_CAPACITY,
+                                    ARRAY_SIZE(batch.records), &start, &count, &dropped);
+                for (uint32_t i = 0; i < count; i++) {
+                    batch.records[i] = log_ring[(start + i) % LOG_RING_CAPACITY];
+                }
+                log_stream_cursor = start + count;
+            }
+
+            /* Nothing new and nothing lost: caught up, wait for the next log. */
+            if (count == 0 && dropped == 0) {
+                break;
+            }
+
+            batch.records_count = count;
+            batch.dropped_count = dropped;
+
+            cormoran_devtool_Notification notification = cormoran_devtool_Notification_init_zero;
+            notification.which_notification_type = cormoran_devtool_Notification_log_stream_tag;
+            notification.notification_type.log_stream = batch;
+
+            struct zmk_studio_custom_notification ev = {
+                .subsystem_index = devtool_custom_subsystem_index(),
+                .encode_payload = {.funcs = {.encode = encode_stream_notification_payload},
+                                   .arg = &notification},
+            };
+
+            /* Any log emitted while this send runs (the Studio subsystem's own
+             * "Encoding custom response" DBG line, transport chatter, ...) is
+             * dropped by devtool_log_backend_process() via log_stream_suppress,
+             * so streaming can't feed itself. */
+            atomic_set(&log_stream_suppress, 1);
+            raise_zmk_studio_custom_notification(ev);
+            atomic_set(&log_stream_suppress, 0);
+        }
+    }
+}
+
+K_THREAD_DEFINE(devtool_log_stream_thread, CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_STACK_SIZE,
+                log_stream_thread, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+
+int devtool_handle_set_log_streaming(const cormoran_devtool_SetLogStreamingRequest *req,
+                                     cormoran_devtool_Response *resp) {
+    if (req->enabled) {
+        /* Start streaming from now (skip whatever was already buffered); use
+         * get_logs to pull existing backlog. */
+        K_SPINLOCK(&log_ring_lock) { log_stream_cursor = log_ring_total_written; }
+        atomic_set(&log_streaming_enabled, 1);
+        k_sem_give(&log_stream_sem);
+    } else {
+        atomic_set(&log_streaming_enabled, 0);
+    }
+
+    cormoran_devtool_SetLogStreamingResponse result =
+        cormoran_devtool_SetLogStreamingResponse_init_zero;
+    result.enabled = req->enabled;
+    resp->which_response_type = cormoran_devtool_Response_set_log_streaming_tag;
+    resp->response_type.set_log_streaming = result;
+    return 0;
+}
+
+#endif /* CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING */
 
 #endif /* CONFIG_ZMK_DEVTOOL_LOG_CAPTURE */

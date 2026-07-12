@@ -182,6 +182,26 @@ message SetLogCaptureFilterRequest {
 
 message SetLogCaptureFilterResponse {}
 
+// --- Streaming log notifications (push instead of poll). When enabled, the
+// firmware sends a LogStreamNotification each time new records are captured,
+// so a client does not have to poll get_logs. The notification encoding runs
+// on a dedicated low-priority thread so it never blocks the logging
+// subsystem. Uses the same capture backend/filter as the poll path, so
+// set_log_capture_filter still applies. get_logs and streaming can be used
+// together (each has its own independent cursor). ---
+message SetLogStreamingRequest { bool enabled = 1; }
+
+message SetLogStreamingResponse { bool enabled = 1; }
+
+// Same record shape as GetLogsResponse, minus next_cursor (the stream keeps
+// its own cursor firmware-side). dropped_count reports records lost because
+// the ring buffer wrapped before the streaming thread could send them (the
+// client fell behind or the transport was saturated).
+message LogStreamNotification {
+    repeated LogRecord records = 1;
+    uint32 dropped_count = 2;
+}
+
 message Request {
     oneof request_type {
         SetStudioLockStateRequest set_studio_lock_state = 1;
@@ -199,6 +219,7 @@ message Request {
         GetLogsRequest get_logs = 13;
         ClearLogsRequest clear_logs = 14;
         SetLogCaptureFilterRequest set_log_capture_filter = 15;
+        SetLogStreamingRequest set_log_streaming = 16;
     }
 }
 
@@ -222,5 +243,13 @@ message Response {
         GetLogsResponse get_logs = 14;
         ClearLogsResponse clear_logs = 15;
         SetLogCaptureFilterResponse set_log_capture_filter = 16;
+        SetLogStreamingResponse set_log_streaming = 17;
     }
+}
+
+// Custom-subsystem notification payload (the bytes carried in a Studio
+// CustomNotification for this subsystem). Decoded client-side to receive
+// streamed log records.
+message Notification {
+    oneof notification_type { LogStreamNotification log_stream = 1; }
 }
