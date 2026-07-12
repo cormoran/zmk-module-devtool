@@ -55,7 +55,12 @@ if ZMK_DEVTOOL_LOG_CAPTURE
 
 config ZMK_DEVTOOL_LOG_CAPTURE_BUFFER_SIZE
     int "Log capture ring buffer capacity (records)"
-    default 16
+    default 64
+    help
+      Number of recent log records retained in the RAM ring buffer. Each
+      record is ~80 bytes (see LogRecord source/message max_size), so the
+      default costs a few KB. Larger buffers tolerate slower pollers /
+      bigger bursts before dropping records.
 
 config ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL
     int "Default minimum captured log level (1=err 2=wrn 3=inf 4=dbg)"

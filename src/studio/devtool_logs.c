@@ -41,14 +41,12 @@
 #define LOG_RING_CAPACITY CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_BUFFER_SIZE
 
 /*
- * ~77 bytes/record (timestamp + level + source[16] + message[48], each with
- * tag/len overhead) * the 3 records/response cap from devtool.options, plus
- * next_cursor/dropped_count and CallResponse wrapper overhead.
+ * No TX-buffer-size BUILD_ASSERT is needed: the RPC transport streams each
+ * encoded response/notification into rpc_tx_buf incrementally, blocking with
+ * backpressure when the ring is full (see rpc_tx_buffer_write in
+ * zmk/studio/rpc.c), so a response may exceed CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE.
+ * The records max_count in devtool.options bounds latency/RAM, not TX size.
  */
-#define DEVTOOL_LOGS_RESPONSE_ESTIMATED_MAX_SIZE 260
-BUILD_ASSERT(DEVTOOL_LOGS_RESPONSE_ESTIMATED_MAX_SIZE + 64 <= CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE,
-             "CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE too small for GetLogsResponse; see "
-             "devtool.options' records max_count comment");
 
 static cormoran_devtool_LogRecord log_ring[LOG_RING_CAPACITY];
 static uint32_t log_ring_total_written;
