@@ -252,6 +252,13 @@ static bool encode_stream_notification_payload(pb_ostream_t *stream, const pb_fi
 static void log_stream_work_handler(struct k_work *work) {
     ARG_UNUSED(work);
 
+    /* Cap the records pushed per invocation so a sustained log flood cannot
+     * keep this drain loop spinning forever and starve every other item on the
+     * shared low-priority work queue. When the cap is hit with more still
+     * buffered, we yield and re-enqueue with K_NO_WAIT below. */
+    uint32_t records_sent = 0;
+    bool more_pending = false;
+
     while (atomic_get(&log_streaming_enabled)) {
         cormoran_devtool_LogStreamNotification batch =
             cormoran_devtool_LogStreamNotification_init_zero;
@@ -288,11 +295,24 @@ static void log_stream_work_handler(struct k_work *work) {
         /* The send emits no captured log of its own (see
          * encode_stream_notification_payload), so it cannot feed streaming. */
         raise_zmk_studio_custom_notification(ev);
+
+        /* Batch-granular cap: we always finish the batch we just sent, so at
+         * least one batch goes out per invocation even if the cap is below the
+         * batch size. If the ceiling is reached while records remain, defer the
+         * rest to a fresh, immediately re-enqueued invocation. */
+        records_sent += count;
+        if (records_sent >= CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_MAX_RECORDS_PER_WORK) {
+            more_pending = true;
+            break;
+        }
     }
 
     if (atomic_get(&log_streaming_enabled)) {
-        k_work_reschedule_for_queue(zmk_workqueue_lowprio_work_q(), &log_stream_work,
-                                    K_MSEC(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS));
+        /* Records still pending -> re-run immediately (yielding the queue to
+         * any other pending work first); otherwise idle until the next tick. */
+        k_work_reschedule_for_queue(
+            zmk_workqueue_lowprio_work_q(), &log_stream_work,
+            more_pending ? K_NO_WAIT : K_MSEC(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS));
     }
 }
 

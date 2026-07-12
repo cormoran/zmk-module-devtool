@@ -100,8 +100,24 @@ config ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS
     help
       How often the low-priority work item wakes to drain and push newly
       captured log records while streaming is enabled. Lower is more
-      responsive but wakes the work queue more often; each wake drains the
-      whole backlog, so throughput is not capped by this interval.
+      responsive but wakes the work queue more often. This interval only
+      governs the wait after the backlog is fully drained; while records are
+      still pending the work re-enqueues itself immediately (see
+      ZMK_DEVTOOL_LOG_CAPTURE_STREAM_MAX_RECORDS_PER_WORK).
+
+config ZMK_DEVTOOL_LOG_CAPTURE_STREAM_MAX_RECORDS_PER_WORK
+    int "Max log records pushed per work-queue invocation"
+    default 30
+    help
+      Upper bound on how many captured records a single streaming work
+      invocation pushes before it yields the shared low-priority work queue.
+      Without a cap, a sustained log flood keeps the drain loop running
+      indefinitely (new records arrive faster than, or as fast as, they are
+      sent), monopolizing the queue and starving other low-priority work.
+      When the cap is hit with records still buffered, the work re-enqueues
+      itself with no delay (not after STREAM_INTERVAL_MS), so throughput is
+      preserved while other work on the queue gets a turn. Rounds up to a
+      whole notification batch, so at least one batch is always sent.
 
 endif # ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
 
