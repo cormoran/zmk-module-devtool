@@ -68,6 +68,38 @@ config ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL
       source to DBG at runtime with set_log_capture_filter instead of
       lowering this default.
 
+config ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+    bool "Enable streaming log notifications (push instead of poll)"
+    default y
+    select ZMK_LOW_PRIORITY_WORK_QUEUE
+    help
+      Adds the set_log_streaming RPC. When enabled, a periodic work item on
+      ZMK's low-priority work queue drains newly captured records and pushes
+      them to the connected Studio client as custom notifications, so the
+      client does not have to poll get_logs. The notification + protobuf
+      encoding runs on the low-priority work queue, never on the logging
+      subsystem's own thread.
+
+if ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+
+# The streaming work item raises a Studio notification, which runs the full RPC
+# response encode + transmit path on the shared low-priority work queue. ZMK's
+# 768-byte default is far too small for that nanopb encode, so raise the floor
+# (a keyboard config can still override this explicitly).
+config ZMK_LOW_PRIORITY_THREAD_STACK_SIZE
+    default 2048
+
+config ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS
+    int "Log streaming poll interval (milliseconds)"
+    default 50
+    help
+      How often the low-priority work item wakes to drain and push newly
+      captured log records while streaming is enabled. Lower is more
+      responsive but wakes the work queue more often; each wake drains the
+      whole backlog, so throughput is not capped by this interval.
+
+endif # ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
+
 endif # ZMK_DEVTOOL_LOG_CAPTURE
 
 config ZMK_DEVTOOL_STUDIO_RPC_TEST

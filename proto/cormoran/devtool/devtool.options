@@ -16,4 +16,9 @@ cormoran.devtool.LogRecord.source            max_size:16
 cormoran.devtool.LogRecord.message           max_size:48
 cormoran.devtool.GetLogsResponse.records     max_count:3
 
+# Streaming shares the same per-record sizing; keep the batch small enough that
+# a LogStreamNotification stays under CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE (see the
+# BUILD_ASSERT in src/studio/devtool_logs.c).
+cormoran.devtool.LogStreamNotification.records max_count:3
+
 cormoran.devtool.SetLogCaptureFilterRequest.source max_size:16

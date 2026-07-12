@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import "./App.css";
 import { connect as serial_connect } from "@zmkfirmware/zmk-studio-ts-client/transport/serial";
 import {
@@ -10,6 +10,7 @@ import type { UseZMKAppReturn } from "@cormoran/zmk-studio-react-hook";
 import {
   Request,
   Response,
+  Notification,
   StudioLockState,
   DevtoolEventType,
   DevtoolEvent,
@@ -728,8 +729,39 @@ export function LogCaptureSection() {
   const [filterLevel, setFilterLevel] = useState<LogLevel>(
     LogLevel.LOG_LEVEL_INF
   );
+  const [streaming, setStreaming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  // While streaming is on, push each LogStreamNotification straight into the
+  // list. React state setters are stable, so this only re-subscribes when the
+  // streaming toggle or the connection/subsystem changes.
+  const subscriptionIndex = subsystem?.index;
+  const onNotification = zmkApp?.onNotification;
+  useEffect(() => {
+    if (!streaming || subscriptionIndex === undefined || !onNotification)
+      return;
+    return onNotification({
+      type: "custom",
+      subsystemIndex: subscriptionIndex,
+      callback: (n) => {
+        if (!n.payload) return;
+        const ls = Notification.decode(n.payload).logStream;
+        if (!ls) return;
+        setRecords((prev) =>
+          [...prev, ...ls.records.map(formatLogRecord)].slice(-200)
+        );
+        const notes: string[] = [];
+        if (ls.droppedCount > 0) {
+          notes.push(`${ls.droppedCount} record(s) dropped (buffer overflow)`);
+        }
+        if (ls.suppressedCount > 0) {
+          notes.push(`${ls.suppressedCount} self-feedback log(s) suppressed`);
+        }
+        if (notes.length > 0) setStatus(`Streaming: ${notes.join("; ")}`);
+      },
+    });
+  }, [streaming, subscriptionIndex, onNotification]);
 
   if (!zmkApp || !subsystem) return null;
 
@@ -756,6 +788,30 @@ export function LogCaptureSection() {
           `Warning: ${page.droppedCount} record(s) dropped (buffer overflow between polls)`
         );
       }
+    } catch (error) {
+      setStatus(
+        `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleStreaming = async () => {
+    const next = !streaming;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const resp = await callDevtoolRpc(
+        zmkApp,
+        subsystem.index,
+        Request.create({ setLogStreaming: { enabled: next } })
+      );
+      if (resp.error) {
+        setStatus(`Error: ${resp.error.message}`);
+        return;
+      }
+      setStreaming(resp.setLogStreaming?.enabled ?? next);
     } catch (error) {
       setStatus(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
@@ -845,13 +901,29 @@ export function LogCaptureSection() {
         >
           Apply Filter
         </button>
-        <button className="btn btn-primary" disabled={busy} onClick={poll}>
+        <button
+          className="btn btn-primary"
+          disabled={busy || streaming}
+          onClick={poll}
+        >
           Poll Now
+        </button>
+        <button
+          className={streaming ? "btn btn-primary" : "btn btn-secondary"}
+          disabled={busy}
+          onClick={toggleStreaming}
+        >
+          {streaming ? "Stop Streaming" : "Start Streaming"}
         </button>
         <button className="btn btn-secondary" disabled={busy} onClick={clear}>
           Clear
         </button>
       </div>
+      {streaming && (
+        <p className="hint">
+          Streaming: new log records are pushed live (no need to poll).
+        </p>
+      )}
       {status && (
         <div className="response-box">
           <pre>{status}</pre>

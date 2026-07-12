@@ -78,6 +78,7 @@ class WestCommandsTests(unittest.TestCase):
                         "CONFIG_ZMK_DEVTOOL_KEY_INJECTION=y",
                         "CONFIG_ZMK_DEVTOOL_EVENT_TAP=y",
                         "CONFIG_ZMK_DEVTOOL_LOG_CAPTURE=y",
+                        "CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING=y",
                         "CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE=384",
                     ],
                     device=[],
