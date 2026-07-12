@@ -37,6 +37,27 @@ ZMK_RPC_CUSTOM_SUBSYSTEM_RESPONSE_BUFFER(cormoran__devtool, cormoran_devtool_Res
 
 static enum devtool_reboot_target pending_reboot_target = DEVTOOL_REBOOT_TARGET_SYSTEM;
 
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+uint8_t devtool_custom_subsystem_index(void) {
+    static int cached = -1;
+    if (cached >= 0) {
+        return (uint8_t)cached;
+    }
+
+    size_t count;
+    STRUCT_SECTION_COUNT(zmk_rpc_custom_subsystem, &count);
+    for (size_t i = 0; i < count; i++) {
+        struct zmk_rpc_custom_subsystem *subsys;
+        STRUCT_SECTION_GET(zmk_rpc_custom_subsystem, i, &subsys);
+        if (subsys == &zmk_rpc_custom_subsystem_cormoran__devtool) {
+            cached = (int)i;
+            return (uint8_t)cached;
+        }
+    }
+    return 0;
+}
+#endif
+
 static cormoran_devtool_StudioLockState to_proto_lock_state(void) {
     switch (zmk_studio_core_get_lock_state()) {
     case ZMK_STUDIO_CORE_LOCK_STATE_LOCKED:
@@ -208,6 +229,11 @@ static bool devtool_rpc_handle_request(const zmk_custom_CallRequest *raw_request
     case cormoran_devtool_Request_set_log_capture_filter_tag:
         rc = devtool_handle_set_log_capture_filter(&req.request_type.set_log_capture_filter, resp);
         break;
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+    case cormoran_devtool_Request_set_log_streaming_tag:
+        rc = devtool_handle_set_log_streaming(&req.request_type.set_log_streaming, resp);
+        break;
+#endif
 #endif
     default:
         LOG_WRN("Unsupported devtool request type: %d", req.which_request_type);

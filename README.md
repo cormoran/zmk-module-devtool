@@ -118,8 +118,17 @@ Adds a Zephyr log backend that mirrors captured records into a RAM ring buffer, 
 - `get_logs` -- cursor-based drain, same shape as `get_events`.
 - `clear_logs` -- empties the buffer.
 - `set_log_capture_filter` -- overrides the minimum captured level globally (empty `source`) or for one log source.
+- `set_log_streaming` -- turns push-mode on/off (see below).
 
 The capture backend defaults to `INF` (`CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_DEFAULT_LEVEL`), which is below the Studio RPC dispatch/transport's own `DBG`-level logging -- calling `get_logs` does not feed its own chatter back into the buffer it just read from. Raise a specific source to `DBG` at runtime with `set_log_capture_filter` instead of lowering the default.
+
+**Streaming (push) mode** (`CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING`, default on)
+
+Instead of polling `get_logs`, call `set_log_streaming{enabled: true}` and the firmware pushes a `LogStreamNotification` (a `Notification` custom-subsystem notification) with newly captured records. Streaming starts from "now" (use `get_logs` for the existing backlog) and keeps its own cursor, so polling and streaming can be used together. `dropped_count` reports records lost if the client falls behind. Remember to `set_log_streaming{enabled: false}` when done -- while a Studio client stays connected the notifications keep flowing.
+
+The draining, notification encoding and transmit run as a periodic work item on ZMK's low-priority work queue (poll interval `CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS`, default 50 ms; each tick drains the whole backlog, so throughput is not capped by it), never on the logging subsystem's own thread.
+
+To avoid streaming feeding itself, the notification send deliberately does **not** emit the Studio RPC's usual `Encoding custom response` `DBG` line, so a push generates no captured log of its own (in any log mode). If you lower capture to `DBG` while streaming and see the Studio transport's own chatter, silence it with `set_log_capture_filter{source: "zmk_studio", min_level: ERR}` -- it logs under its own `zmk_studio` source, separate from `zmk`. (Note that `DBG`-level Studio logging still appears on the console/RTT regardless -- the capture backend only affects what devtool captures, not other log backends.)
 
 ## Web UI
 

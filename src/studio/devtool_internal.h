@@ -75,3 +75,16 @@ int devtool_handle_clear_logs(cormoran_devtool_Response *resp);
 int devtool_handle_set_log_capture_filter(const cormoran_devtool_SetLogCaptureFilterRequest *req,
                                           cormoran_devtool_Response *resp);
 #endif
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
+int devtool_handle_set_log_streaming(const cormoran_devtool_SetLogStreamingRequest *req,
+                                     cormoran_devtool_Response *resp);
+
+/*
+ * Index of this module's custom subsystem within the zmk_rpc_custom_subsystem
+ * iterable section, needed to address custom notifications back to the client.
+ * Resolved once and cached; defined in devtool_handler.c where the subsystem
+ * registration is visible.
+ */
+uint8_t devtool_custom_subsystem_index(void);
+#endif
