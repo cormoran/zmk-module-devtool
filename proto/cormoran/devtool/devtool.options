@@ -4,9 +4,8 @@
 
 cormoran.devtool.ErrorResponse.message   max_size:96
 
-# Event tap: 4 fixed uint32/bool fields per record at most (KeycodeStateChangedData
-# is the largest variant), so 6 fit comfortably under the default RPC TX buffer --
-# see the BUILD_ASSERT in src/studio/devtool_events.c for the exact arithmetic.
+# Event tap: the RPC transport streams responses out with backpressure, so this
+# max_count bounds per-response latency/RAM, not the TX buffer size.
 cormoran.devtool.GetEventsResponse.events    max_count:6
 
 # Log capture: source/message are formatted text truncated to fit. The RPC

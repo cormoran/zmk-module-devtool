@@ -51,15 +51,12 @@ struct devtool_event_record {
 #define EVENT_RING_CAPACITY CONFIG_ZMK_DEVTOOL_EVENT_TAP_BUFFER_SIZE
 
 /*
- * ~37 bytes/event (timestamp + type + the largest oneof variant,
- * KeycodeStateChangedData, plus repeated-field tag/len overhead) * the 6
- * events/response cap from devtool.options, plus next_cursor/dropped_count
- * and CallResponse wrapper overhead.
+ * No TX-buffer-size BUILD_ASSERT is needed: the RPC transport streams each
+ * encoded response into rpc_tx_buf incrementally, blocking with backpressure
+ * when the ring is full (see rpc_tx_buffer_write in zmk/studio/rpc.c), so a
+ * GetEventsResponse may exceed CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE. The events
+ * max_count in devtool.options bounds latency/RAM, not TX size.
  */
-#define DEVTOOL_EVENTS_RESPONSE_ESTIMATED_MAX_SIZE 260
-BUILD_ASSERT(DEVTOOL_EVENTS_RESPONSE_ESTIMATED_MAX_SIZE + 64 <= CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE,
-             "CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE too small for GetEventsResponse; see "
-             "devtool.options' events max_count comment");
 
 static struct devtool_event_record event_ring[EVENT_RING_CAPACITY];
 static uint32_t event_ring_total_written;
