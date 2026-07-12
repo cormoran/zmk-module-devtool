@@ -141,7 +141,7 @@ To avoid streaming feeding itself, the notification send deliberately does **not
 
 Reports each running thread's stack size and peak ("high-water") usage, so stack headroom can be inspected without a debug probe.
 
-- `get_stack_usage` -- returns a `StackInfo` (`name`, `size`, `used`, `unused`) per thread. Cursor-based pagination like `get_logs`/`get_events`: start with `cursor: 0` and pass back `next_cursor` until it comes back `0`; `total` reports how many threads the sweep saw.
+- `get_stack_usage` -- returns a `StackInfo` (`name`, `size`, `used`; free headroom is `size - used`) per thread. Cursor-based pagination like `get_logs`/`get_events`: start with `cursor: 0` and pass back `next_cursor` until it comes back `0`; `total` reports how many threads the sweep saw.
 
 Enabling this selects the Zephyr bookkeeping the measurement needs -- `THREAD_MONITOR` (enumerate threads), `THREAD_STACK_INFO` (stack bounds), `THREAD_NAME` (readable names) and `INIT_STACKS` (paint stacks so unused space can be measured). `INIT_STACKS` adds a small per-thread startup cost, so leave this off in production builds. If a thread reports `used: 0`, the running kernel could not measure it (e.g. the arch lacks stack-fill support).
 

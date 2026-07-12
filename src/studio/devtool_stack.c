@@ -71,7 +71,6 @@ static void stack_collect_cb(const struct k_thread *thread, void *user_data) {
         if (unused > size) {
             unused = size;
         }
-        info->unused = (uint32_t)unused;
         info->used = size - (uint32_t)unused;
     }
 

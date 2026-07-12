@@ -216,10 +216,9 @@ message StackInfo {
     // Total usable stack size in bytes.
     uint32 size = 2;
     // Peak bytes used since boot (high-water mark). 0 if the running kernel
-    // could not measure it (e.g. INIT_STACKS unavailable on the arch).
+    // could not measure it (e.g. INIT_STACKS unavailable on the arch). Free
+    // headroom is simply size - used, so it is not sent separately.
     uint32 used = 3;
-    // Currently-unused bytes (size - used).
-    uint32 unused = 4;
 }
 
 // Cursor-based pagination, same shape as get_logs/get_events: start with

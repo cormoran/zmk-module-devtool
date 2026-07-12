@@ -382,11 +382,9 @@ static int test_rpc_stack_usage(void) {
 
         for (size_t i = 0; i < usage->stacks_count; i++) {
             const cormoran_devtool_StackInfo *info = &usage->stacks[i];
-            if (info->name[0] == '\0' || info->size == 0 || info->used > info->size ||
-                info->unused > info->size ||
-                (info->used != 0 && info->used + info->unused != info->size)) {
-                LOG_ERR("bad StackInfo name=%s size=%u used=%u unused=%u", info->name, info->size,
-                        info->used, info->unused);
+            if (info->name[0] == '\0' || info->size == 0 || info->used > info->size) {
+                LOG_ERR("bad StackInfo name=%s size=%u used=%u", info->name, info->size,
+                        info->used);
                 return -EINVAL;
             }
             if (info->used != 0) {

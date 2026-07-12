@@ -1027,7 +1027,7 @@ export function StackUsageSection() {
                   <td>{s.name}</td>
                   <td>{s.used}</td>
                   <td>{s.size}</td>
-                  <td>{s.unused}</td>
+                  <td>{Math.max(0, s.size - s.used)}</td>
                   <td className={usageFraction(s) >= 0.8 ? "stack-high" : ""}>
                     {formatUsagePercent(s)}
                   </td>
