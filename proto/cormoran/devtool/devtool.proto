@@ -201,10 +201,6 @@ message LogStreamNotification {
     // Records lost because the ring buffer wrapped before they could be sent
     // (the client fell behind or the transport was saturated).
     uint32 dropped_count = 2;
-    // Cumulative count (since streaming was last enabled) of records dropped by
-    // the self-feedback guard: logs emitted as a side effect of sending a
-    // stream notification, which are dropped so streaming cannot feed itself.
-    uint32 suppressed_count = 3;
 }
 
 message Request {

@@ -731,10 +731,8 @@ export function LogCaptureSection() {
   );
   const [streaming, setStreaming] = useState(false);
   // Accumulated across the current streaming session: droppedCount is a
-  // per-notification delta (summed here); suppressedCount is already a
-  // firmware-side running total (so we keep the latest value).
+  // per-notification delta, summed here.
   const [streamDropped, setStreamDropped] = useState(0);
-  const [streamSuppressed, setStreamSuppressed] = useState(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -758,9 +756,6 @@ export function LogCaptureSection() {
         );
         if (ls.droppedCount > 0) {
           setStreamDropped((prev) => prev + ls.droppedCount);
-        }
-        if (ls.suppressedCount > 0) {
-          setStreamSuppressed(ls.suppressedCount);
         }
       },
     });
@@ -817,7 +812,6 @@ export function LogCaptureSection() {
       const enabled = resp.setLogStreaming?.enabled ?? next;
       if (enabled) {
         setStreamDropped(0);
-        setStreamSuppressed(0);
       }
       setStreaming(enabled);
     } catch (error) {
@@ -930,8 +924,7 @@ export function LogCaptureSection() {
       {streaming && (
         <p className="hint">
           Streaming: new log records are pushed live (no need to poll). Dropped:{" "}
-          {streamDropped} (buffer overflow) · Suppressed: {streamSuppressed}{" "}
-          (self-feedback)
+          {streamDropped} (buffer overflow)
         </p>
       )}
       {status && (

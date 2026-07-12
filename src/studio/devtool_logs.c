@@ -55,13 +55,10 @@ static uint32_t log_ring_total_written;
 static struct k_spinlock log_ring_lock;
 
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
-/* Streaming state. streaming_enabled/suppress/suppressed_total are only ever
- * read/written with atomics; log_stream_cursor is guarded by log_ring_lock
- * (shared with the ring math). See log_stream_work_handler and
- * devtool_handle_set_log_streaming below. */
+/* Streaming state. streaming_enabled is only ever read/written with atomics;
+ * log_stream_cursor is guarded by log_ring_lock (shared with the ring math).
+ * See log_stream_work_handler and devtool_handle_set_log_streaming below. */
 static atomic_t log_streaming_enabled = ATOMIC_INIT(0);
-static atomic_t log_stream_suppress = ATOMIC_INIT(0);
-static atomic_t log_stream_suppressed_total = ATOMIC_INIT(0);
 static uint32_t log_stream_cursor;
 static void log_stream_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(log_stream_work, log_stream_work_handler);
@@ -115,20 +112,6 @@ static void devtool_log_backend_process(const struct log_backend *const backend,
                                         union log_msg_generic *msg) {
     ARG_UNUSED(backend);
     struct log_msg *log_msg = &msg->log;
-
-#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
-    /* Secondary self-feedback guard: drop (and count) anything logged as a side
-     * effect of the streaming worker's own notification send. The primary
-     * defense is that the send no longer emits the "Encoding custom response"
-     * DBG line at all (see encode_stream_notification_payload); this catches any
-     * other captured-level log the transport might emit mid-send. Reliable only
-     * in immediate log mode -- in deferred mode such a log is processed after
-     * this window closes; see the README zmk_studio source-filter note. */
-    if (atomic_get(&log_stream_suppress)) {
-        atomic_inc(&log_stream_suppressed_total);
-        return;
-    }
-#endif
 
     pending_record = (cormoran_devtool_LogRecord)cormoran_devtool_LogRecord_init_zero;
     pending_message_len = 0;
@@ -241,11 +224,11 @@ int devtool_handle_set_log_capture_filter(const cormoran_devtool_SetLogCaptureFi
  *
  * This is deliberately an inline copy of zmk_rpc_custom_subsystem_encode_
  * response_payload() MINUS its LOG_DBG("Encoding custom response...") line.
- * That helper is called on every send (twice: sizing + encoding), and in
- * deferred log mode the resulting message is processed by the logging thread
- * *after* the log_stream_suppress window has already closed -- so it would slip
- * past the guard, get captured, and feed streaming back into itself. Not
- * emitting it at all is the robust fix that works regardless of log mode. */
+ * That helper logs on every send; since streaming sends continuously, at DBG
+ * capture that log would be captured and streamed, generating another send --
+ * a self-feedback loop (and it cannot be reliably suppressed after the fact in
+ * deferred log mode, where it is processed off this thread). Not emitting it at
+ * all is the robust fix that works regardless of log mode. */
 static bool encode_stream_notification_payload(pb_ostream_t *stream, const pb_field_t *field,
                                                void *const *arg) {
     const cormoran_devtool_Notification *notification = *arg;
@@ -293,7 +276,6 @@ static void log_stream_work_handler(struct k_work *work) {
 
         batch.records_count = count;
         batch.dropped_count = dropped;
-        batch.suppressed_count = (uint32_t)atomic_get(&log_stream_suppressed_total);
 
         cormoran_devtool_Notification notification = cormoran_devtool_Notification_init_zero;
         notification.which_notification_type = cormoran_devtool_Notification_log_stream_tag;
@@ -305,12 +287,9 @@ static void log_stream_work_handler(struct k_work *work) {
                                .arg = &notification},
         };
 
-        /* Secondary guard for any captured-level log emitted while this send
-         * runs; the send itself no longer logs (see
-         * encode_stream_notification_payload). */
-        atomic_set(&log_stream_suppress, 1);
+        /* The send emits no captured log of its own (see
+         * encode_stream_notification_payload), so it cannot feed streaming. */
         raise_zmk_studio_custom_notification(ev);
-        atomic_set(&log_stream_suppress, 0);
     }
 
     if (atomic_get(&log_streaming_enabled)) {
@@ -325,7 +304,6 @@ int devtool_handle_set_log_streaming(const cormoran_devtool_SetLogStreamingReque
         /* Start streaming from now (skip whatever was already buffered); use
          * get_logs to pull existing backlog. */
         K_SPINLOCK(&log_ring_lock) { log_stream_cursor = log_ring_total_written; }
-        atomic_set(&log_stream_suppressed_total, 0);
         atomic_set(&log_streaming_enabled, 1);
         k_work_reschedule_for_queue(zmk_workqueue_lowprio_work_q(), &log_stream_work, K_NO_WAIT);
     } else {
