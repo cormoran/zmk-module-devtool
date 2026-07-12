@@ -17,6 +17,7 @@ The module uses the **unofficial** custom ZMK Studio RPC protocol and requires a
 - Inject virtual key presses (and releases) without touching hardware.
 - Tap a running log of position/keycode/layer/modifier events for verifying what an injected (or real) key press did.
 - Pull captured Zephyr log records without a debug probe.
+- Inspect per-thread stack size and peak ("high-water") usage without a debug probe.
 - Optional React web UI for invoking the RPC methods from a browser.
 
 The custom subsystem identifier is `cormoran__devtool`. Its security level is unsecured so automation can unlock Studio before sending secured Studio RPC requests.
@@ -66,6 +67,12 @@ Key injection, the event tap and log capture are each behind their own Kconfig o
    CONFIG_ZMK_DEVTOOL_EVENT_TAP=y
    CONFIG_ZMK_DEVTOOL_LOG_CAPTURE=y
    CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE=384
+   ```
+
+   Stack usage inspection is also opt-in. It selects the Zephyr thread bookkeeping the measurement needs (`THREAD_MONITOR`, `THREAD_STACK_INFO`, `THREAD_NAME`, `INIT_STACKS`), which add a small startup cost, so leave it off in production firmware:
+
+   ```conf
+   CONFIG_ZMK_DEVTOOL_STACK_USAGE=y
    ```
 
 3. Build and flash your firmware as usual.
@@ -129,6 +136,14 @@ Instead of polling `get_logs`, call `set_log_streaming{enabled: true}` and the f
 The draining, notification encoding and transmit run as a periodic work item on ZMK's low-priority work queue (poll interval `CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_INTERVAL_MS`, default 50 ms), never on the logging subsystem's own thread. Each invocation pushes at most `CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAM_MAX_RECORDS_PER_WORK` records (default 30) and then yields; if records are still buffered it re-enqueues immediately (with no delay) rather than waiting a full interval. This bounds how long a single invocation can hold the shared low-priority work queue, so a sustained log flood can no longer starve other low-priority work, while the immediate re-enqueue keeps throughput high.
 
 To avoid streaming feeding itself, the notification send deliberately does **not** emit the Studio RPC's usual `Encoding custom response` `DBG` line, so a push generates no captured log of its own (in any log mode). If you lower capture to `DBG` while streaming and see the Studio transport's own chatter, silence it with `set_log_capture_filter{source: "zmk_studio", min_level: ERR}` -- it logs under its own `zmk_studio` source, separate from `zmk`. (Note that `DBG`-level Studio logging still appears on the console/RTT regardless -- the capture backend only affects what devtool captures, not other log backends.)
+
+**Stack usage** (`CONFIG_ZMK_DEVTOOL_STACK_USAGE`)
+
+Reports each running thread's stack size and peak ("high-water") usage, so stack headroom can be inspected without a debug probe.
+
+- `get_stack_usage` -- returns a `StackInfo` (`name`, `size`, `used`, `unused`) per thread. Cursor-based pagination like `get_logs`/`get_events`: start with `cursor: 0` and pass back `next_cursor` until it comes back `0`; `total` reports how many threads the sweep saw.
+
+Enabling this selects the Zephyr bookkeeping the measurement needs -- `THREAD_MONITOR` (enumerate threads), `THREAD_STACK_INFO` (stack bounds), `THREAD_NAME` (readable names) and `INIT_STACKS` (paint stacks so unused space can be measured). `INIT_STACKS` adds a small per-thread startup cost, so leave this off in production builds. If a thread reports `used: 0`, the running kernel could not measure it (e.g. the arch lacks stack-fill support).
 
 ## Web UI
 

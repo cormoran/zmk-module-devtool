@@ -16,6 +16,7 @@ import {
   DevtoolEvent,
   LogLevel,
   LogRecord,
+  StackInfo,
 } from "./proto/cormoran/devtool/devtool";
 
 export const SUBSYSTEM_IDENTIFIER = "cormoran__devtool";
@@ -67,6 +68,7 @@ function App() {
             <KeyInjectionSection />
             <EventTapSection />
             <LogCaptureSection />
+            <StackUsageSection />
           </>
         )}
       />
@@ -939,6 +941,115 @@ export function LogCaptureSection() {
       )}
     </section>
   );
+}
+
+/** Reads every thread's stack size and peak usage over get_stack_usage,
+ * draining all pages (the firmware paginates), and renders them as a table
+ * sorted by usage so the tightest stacks surface first. Only rendered when the
+ * firmware was built with CONFIG_ZMK_DEVTOOL_STACK_USAGE; if that Kconfig is
+ * off, the RPC returns an error and it is shown here. */
+export function StackUsageSection() {
+  const { zmkApp, subsystem } = useDevtoolSubsystem();
+  const [stacks, setStacks] = useState<StackInfo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  if (!zmkApp || !subsystem) return null;
+
+  const refresh = async () => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const collected: StackInfo[] = [];
+      let cursor = 0;
+      // Bounded loop: the firmware returns nextCursor === 0 on the last page.
+      // The cap is a safety net against a misbehaving cursor, not an expected
+      // page count.
+      for (let page = 0; page < 64; page++) {
+        const resp = await callDevtoolRpc(
+          zmkApp,
+          subsystem.index,
+          Request.create({ getStackUsage: { cursor } })
+        );
+        if (resp.error) {
+          setStatus(`Error: ${resp.error.message}`);
+          return;
+        }
+        const usage = resp.getStackUsage!;
+        collected.push(...usage.stacks);
+        if (usage.nextCursor === 0) break;
+        cursor = usage.nextCursor;
+      }
+      collected.sort((a, b) => usageFraction(b) - usageFraction(a));
+      setStacks(collected);
+      setStatus(`${collected.length} thread(s)`);
+    } catch (error) {
+      setStatus(
+        `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>Stack Usage</h2>
+      <p className="hint">
+        Per-thread stack high-water usage. Requires firmware built with{" "}
+        <code>CONFIG_ZMK_DEVTOOL_STACK_USAGE</code>.
+      </p>
+      <div className="button-grid">
+        <button className="btn btn-primary" disabled={busy} onClick={refresh}>
+          Refresh
+        </button>
+      </div>
+      {status && (
+        <div className="response-box">
+          <pre>{status}</pre>
+        </div>
+      )}
+      {stacks.length > 0 && (
+        <div className="response-box">
+          <table className="stack-table">
+            <thead>
+              <tr>
+                <th>Thread</th>
+                <th>Used</th>
+                <th>Size</th>
+                <th>Free</th>
+                <th>Usage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stacks.map((s, i) => (
+                <tr key={`${s.name}-${i}`}>
+                  <td>{s.name}</td>
+                  <td>{s.used}</td>
+                  <td>{s.size}</td>
+                  <td>{s.unused}</td>
+                  <td className={usageFraction(s) >= 0.8 ? "stack-high" : ""}>
+                    {formatUsagePercent(s)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** used/size as a 0..1 fraction; 0 when the firmware could not measure usage
+ * (size 0 or used 0). */
+function usageFraction(s: StackInfo): number {
+  return s.size > 0 ? s.used / s.size : 0;
+}
+
+function formatUsagePercent(s: StackInfo): string {
+  if (s.size === 0 || s.used === 0) return "n/a";
+  return `${((s.used / s.size) * 100).toFixed(1)}%`;
 }
 
 export default App;

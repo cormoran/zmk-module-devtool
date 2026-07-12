@@ -123,6 +123,22 @@ endif # ZMK_DEVTOOL_LOG_CAPTURE_STREAMING
 
 endif # ZMK_DEVTOOL_LOG_CAPTURE
 
+config ZMK_DEVTOOL_STACK_USAGE
+    bool "Enable per-thread stack usage RPC (get_stack_usage)"
+    select THREAD_MONITOR
+    select THREAD_STACK_INFO
+    select THREAD_NAME
+    select INIT_STACKS
+    help
+      Adds the get_stack_usage RPC, which reports every running thread's stack
+      size and peak ("high-water") usage over Studio RPC, so stack headroom
+      can be inspected without a debug probe. Pulls in the Zephyr bookkeeping
+      the measurement needs: THREAD_MONITOR (enumerate running threads),
+      THREAD_STACK_INFO (know each stack's bounds), THREAD_NAME (report
+      readable names) and INIT_STACKS (paint stacks with a sentinel so unused
+      space can be measured). INIT_STACKS adds a small per-thread startup cost,
+      so leave this off in production builds.
+
 config ZMK_DEVTOOL_STUDIO_RPC_TEST
     bool "Enable devtool Studio RPC self-test (native_sim only)"
     help
