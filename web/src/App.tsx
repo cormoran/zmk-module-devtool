@@ -730,6 +730,11 @@ export function LogCaptureSection() {
     LogLevel.LOG_LEVEL_INF
   );
   const [streaming, setStreaming] = useState(false);
+  // Accumulated across the current streaming session: droppedCount is a
+  // per-notification delta (summed here); suppressedCount is already a
+  // firmware-side running total (so we keep the latest value).
+  const [streamDropped, setStreamDropped] = useState(0);
+  const [streamSuppressed, setStreamSuppressed] = useState(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -751,14 +756,12 @@ export function LogCaptureSection() {
         setRecords((prev) =>
           [...prev, ...ls.records.map(formatLogRecord)].slice(-200)
         );
-        const notes: string[] = [];
         if (ls.droppedCount > 0) {
-          notes.push(`${ls.droppedCount} record(s) dropped (buffer overflow)`);
+          setStreamDropped((prev) => prev + ls.droppedCount);
         }
         if (ls.suppressedCount > 0) {
-          notes.push(`${ls.suppressedCount} self-feedback log(s) suppressed`);
+          setStreamSuppressed(ls.suppressedCount);
         }
-        if (notes.length > 0) setStatus(`Streaming: ${notes.join("; ")}`);
       },
     });
   }, [streaming, subscriptionIndex, onNotification]);
@@ -811,7 +814,12 @@ export function LogCaptureSection() {
         setStatus(`Error: ${resp.error.message}`);
         return;
       }
-      setStreaming(resp.setLogStreaming?.enabled ?? next);
+      const enabled = resp.setLogStreaming?.enabled ?? next;
+      if (enabled) {
+        setStreamDropped(0);
+        setStreamSuppressed(0);
+      }
+      setStreaming(enabled);
     } catch (error) {
       setStatus(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
@@ -921,7 +929,9 @@ export function LogCaptureSection() {
       </div>
       {streaming && (
         <p className="hint">
-          Streaming: new log records are pushed live (no need to poll).
+          Streaming: new log records are pushed live (no need to poll). Dropped:{" "}
+          {streamDropped} (buffer overflow) · Suppressed: {streamSuppressed}{" "}
+          (self-feedback)
         </p>
       )}
       {status && (

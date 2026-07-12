@@ -117,13 +117,13 @@ static void devtool_log_backend_process(const struct log_backend *const backend,
     struct log_msg *log_msg = &msg->log;
 
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
-    /* Drop anything logged as a side effect of the streaming worker's own
-     * notification send (e.g. the "zmk"-source "Encoding custom response" line),
-     * so streaming cannot re-trigger itself, and count it so the client can see
-     * how much was hidden. Fully effective in immediate log mode where those
-     * logs run inline on the work-queue thread; see the self-feedback note in
-     * log_stream_work_handler and README for the deferred-mode caveat and the
-     * recommended zmk_studio source filter. */
+    /* Secondary self-feedback guard: drop (and count) anything logged as a side
+     * effect of the streaming worker's own notification send. The primary
+     * defense is that the send no longer emits the "Encoding custom response"
+     * DBG line at all (see encode_stream_notification_payload); this catches any
+     * other captured-level log the transport might emit mid-send. Reliable only
+     * in immediate log mode -- in deferred mode such a log is processed after
+     * this window closes; see the README zmk_studio source-filter note. */
     if (atomic_get(&log_stream_suppress)) {
         atomic_inc(&log_stream_suppressed_total);
         return;
@@ -236,13 +236,31 @@ int devtool_handle_set_log_capture_filter(const cormoran_devtool_SetLogCaptureFi
 
 /* Encodes the devtool Notification as the CustomNotification payload bytes,
  * same wire shape as a CallResponse payload. Runs synchronously inside
- * raise_zmk_studio_custom_notification(), so `arg` may point at the streaming
- * thread's stack. */
+ * raise_zmk_studio_custom_notification(), so `arg` may point at the work
+ * handler's stack.
+ *
+ * This is deliberately an inline copy of zmk_rpc_custom_subsystem_encode_
+ * response_payload() MINUS its LOG_DBG("Encoding custom response...") line.
+ * That helper is called on every send (twice: sizing + encoding), and in
+ * deferred log mode the resulting message is processed by the logging thread
+ * *after* the log_stream_suppress window has already closed -- so it would slip
+ * past the guard, get captured, and feed streaming back into itself. Not
+ * emitting it at all is the robust fix that works regardless of log mode. */
 static bool encode_stream_notification_payload(pb_ostream_t *stream, const pb_field_t *field,
                                                void *const *arg) {
     const cormoran_devtool_Notification *notification = *arg;
-    return zmk_rpc_custom_subsystem_encode_response_payload(
-        stream, field, cormoran_devtool_Notification_fields, notification);
+
+    if (!pb_encode_tag_for_field(stream, field)) {
+        return false;
+    }
+    size_t size;
+    if (!pb_get_encoded_size(&size, cormoran_devtool_Notification_fields, notification)) {
+        return false;
+    }
+    if (!pb_encode_varint(stream, size)) {
+        return false;
+    }
+    return pb_encode(stream, cormoran_devtool_Notification_fields, notification);
 }
 
 /* Periodic worker on ZMK's low-priority work queue: drains the log ring from
@@ -287,10 +305,9 @@ static void log_stream_work_handler(struct k_work *work) {
                                .arg = &notification},
         };
 
-        /* Any log emitted while this send runs (the Studio subsystem's own
-         * "Encoding custom response" DBG line, transport chatter, ...) is
-         * dropped and counted by devtool_log_backend_process() via
-         * log_stream_suppress, so streaming can't feed itself. */
+        /* Secondary guard for any captured-level log emitted while this send
+         * runs; the send itself no longer logs (see
+         * encode_stream_notification_payload). */
         atomic_set(&log_stream_suppress, 1);
         raise_zmk_studio_custom_notification(ev);
         atomic_set(&log_stream_suppress, 0);
