@@ -351,6 +351,70 @@ static int test_rpc_log_capture(void) {
     return 0;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_STACK_USAGE)
+/*
+ * Drains every page of get_stack_usage, checking the pagination reassembles
+ * into `total` threads and that each StackInfo is internally consistent
+ * (named, non-zero stack size, used/unused within bounds). Uses a small page
+ * size (max_count:8) against native_sim's thread set, so more than one page is
+ * exercised.
+ */
+static int test_rpc_stack_usage(void) {
+    uint32_t cursor = 0;
+    uint32_t seen = 0;
+    uint32_t reported_total = 0;
+    bool saw_used = false;
+
+    for (int page = 0; page < 32; page++) {
+        cormoran_devtool_Request req = cormoran_devtool_Request_init_zero;
+        req.which_request_type = cormoran_devtool_Request_get_stack_usage_tag;
+        req.request_type.get_stack_usage.cursor = cursor;
+
+        cormoran_devtool_Response resp;
+        if (!call_devtool_rpc(&req, &resp) ||
+            resp.which_response_type != cormoran_devtool_Response_get_stack_usage_tag) {
+            LOG_ERR("get_stack_usage failed: type=%d", resp.which_response_type);
+            return -EINVAL;
+        }
+
+        const cormoran_devtool_GetStackUsageResponse *usage = &resp.response_type.get_stack_usage;
+        reported_total = usage->total;
+
+        for (size_t i = 0; i < usage->stacks_count; i++) {
+            const cormoran_devtool_StackInfo *info = &usage->stacks[i];
+            if (info->name[0] == '\0' || info->size == 0 || info->used > info->size) {
+                LOG_ERR("bad StackInfo name=%s size=%u used=%u", info->name, info->size,
+                        info->used);
+                return -EINVAL;
+            }
+            if (info->used != 0) {
+                saw_used = true;
+            }
+        }
+        seen += usage->stacks_count;
+
+        if (usage->next_cursor == 0) {
+            break;
+        }
+        cursor = usage->next_cursor;
+    }
+
+    if (reported_total == 0 || seen != reported_total) {
+        LOG_ERR("get_stack_usage pagination mismatch: seen=%u total=%u", seen, reported_total);
+        return -EINVAL;
+    }
+    /* At least one thread should report a measured high-water mark; if none do,
+     * INIT_STACKS/THREAD_STACK_INFO did not take effect. */
+    if (!saw_used) {
+        LOG_ERR("get_stack_usage measured no stack usage on any thread");
+        return -EINVAL;
+    }
+
+    LOG_INF("PASS: devtool_rpc_stack_usage");
+    return 0;
+}
+#endif /* CONFIG_ZMK_DEVTOOL_STACK_USAGE */
+
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
 /*
  * The streaming thread pushes captured records back to the client as custom
@@ -487,6 +551,13 @@ static int devtool_rpc_test_init(void) {
     if (ret < 0) {
         return ret;
     }
+
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_STACK_USAGE)
+    ret = test_rpc_stack_usage();
+    if (ret < 0) {
+        return ret;
+    }
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
     /* The streaming worker runs on ZMK's low-priority work queue, which is

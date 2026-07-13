@@ -20,3 +20,9 @@ cormoran.devtool.GetLogsResponse.records     max_count:3
 cormoran.devtool.LogStreamNotification.records max_count:3
 
 cormoran.devtool.SetLogCaptureFilterRequest.source max_size:16
+
+# Stack usage: thread names are truncated to fit; 8 threads/response streams
+# out with backpressure like get_logs (this bounds per-response latency/RAM,
+# not the TX buffer size), and get_stack_usage paginates over any thread count.
+cormoran.devtool.StackInfo.name                 max_size:24
+cormoran.devtool.GetStackUsageResponse.stacks   max_count:8

@@ -219,6 +219,11 @@ static bool devtool_rpc_handle_request(const zmk_custom_CallRequest *raw_request
         rc = devtool_handle_clear_events(resp);
         break;
 #endif
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_STACK_USAGE)
+    case cormoran_devtool_Request_get_stack_usage_tag:
+        rc = devtool_handle_get_stack_usage(&req.request_type.get_stack_usage, resp);
+        break;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE)
     case cormoran_devtool_Request_get_logs_tag:
         rc = devtool_handle_get_logs(&req.request_type.get_logs, resp);

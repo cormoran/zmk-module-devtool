@@ -76,6 +76,11 @@ int devtool_handle_set_log_capture_filter(const cormoran_devtool_SetLogCaptureFi
                                           cormoran_devtool_Response *resp);
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_DEVTOOL_STACK_USAGE)
+int devtool_handle_get_stack_usage(const cormoran_devtool_GetStackUsageRequest *req,
+                                   cormoran_devtool_Response *resp);
+#endif
+
 #if IS_ENABLED(CONFIG_ZMK_DEVTOOL_LOG_CAPTURE_STREAMING)
 int devtool_handle_set_log_streaming(const cormoran_devtool_SetLogStreamingRequest *req,
                                      cormoran_devtool_Response *resp);

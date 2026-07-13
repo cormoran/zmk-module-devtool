@@ -109,6 +109,36 @@
   white-space: pre-wrap;
 }
 
+.hint {
+  margin: 0.25rem 0 0.75rem;
+  color: #5a6b7b;
+  font-size: 0.85rem;
+}
+
+.stack-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.stack-table th,
+.stack-table td {
+  padding: 0.25rem 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid #e1e7ee;
+}
+
+.stack-table th:first-child,
+.stack-table td:first-child {
+  text-align: left;
+  font-family: monospace;
+}
+
+.stack-table .stack-high {
+  color: #b00020;
+  font-weight: 600;
+}
+
 .log-list {
   max-height: 240px;
   overflow-y: auto;
