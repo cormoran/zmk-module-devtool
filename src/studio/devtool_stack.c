@@ -21,12 +21,23 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 /*
  * Per-thread stack high-water inspection over Studio RPC.
  *
- * k_thread_foreach() walks the kernel thread list (CONFIG_THREAD_MONITOR) and
- * for each thread k_thread_stack_space_get() scans its stack for the unused
+ * k_thread_foreach_unlocked() walks the kernel thread list (CONFIG_THREAD_MONITOR)
+ * and for each thread k_thread_stack_space_get() scans its stack for the unused
  * INIT_STACKS sentinel (CONFIG_INIT_STACKS) to report peak usage against the
  * stack bounds recorded in stack_info (CONFIG_THREAD_STACK_INFO). This is the
  * same measurement Zephyr's thread_analyzer performs; all four Kconfigs are
  * selected by CONFIG_ZMK_DEVTOOL_STACK_USAGE.
+ *
+ * We deliberately use the *unlocked* foreach: the locked k_thread_foreach()
+ * holds z_thread_monitor_lock (an irq_lock() on single-core) across the whole
+ * walk, and scanning each thread's stack word-by-word keeps interrupts disabled
+ * long enough to starve the nRF radio/link-layer ISRs -- freezing the board and
+ * tripping the BT controller's assert path (observed as a Kernel oops on the
+ * studio_rpc_thread). The unlocked variant re-enables interrupts around every
+ * per-thread callback, exactly as thread_analyzer does by default
+ * (CONFIG_THREAD_ANALYZER_RUN_UNLOCKED). The list is still lock-protected while
+ * advancing between threads; a thread aborting mid-callback is the standard,
+ * accepted trade-off for this read-only diagnostic.
  *
  * The response is paginated (cursor = number of threads to skip) so an
  * arbitrary thread count fits the fixed GetStackUsageResponse.stacks array.
@@ -87,7 +98,7 @@ int devtool_handle_get_stack_usage(const cormoran_devtool_GetStackUsageRequest *
         .skip = req->cursor,
     };
 
-    k_thread_foreach(stack_collect_cb, &ctx);
+    k_thread_foreach_unlocked(stack_collect_cb, &ctx);
 
     result.next_cursor = ctx.overflow ? ctx.skip + result.stacks_count : 0;
     result.total = ctx.total;
